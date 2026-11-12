@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kimi - what the Kimi Code implementer pane needs besides the executable (#65).
 
-Kimi Code 2.1.1 has no per-session tool policy the workbench can set: `--agent-file` and `--agent`
+Kimi Code 2.1.1 has no per-session tool policy the WagFlow can set: `--agent-file` and `--agent`
 are ignored in its interactive mode (only `-p` binds the profile; the TUI session always binds the
 default `agent` profile), the workspace tool gate is a no-op, and the only file-based switch is the
 global `[tools] disabled` in its config.toml. So:
@@ -40,15 +40,15 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 TEMPLATES = ROOT / "kimi"
 WEB_TOOLS = ("FetchURL", "WebSearch")
-MARKER = "<!-- agworkbench: the Kimi implementer's role"
+MARKER = "<!-- wagflow: the Kimi implementer's role"
 AGENTS_MD = Path(".kimi-code") / "AGENTS.md"
 EXCLUDE_LINE = "/.kimi-code/AGENTS.md"
-REFUSED_SCHEME = "agworkbench-push-refused://"
+REFUSED_SCHEME = "wagflow-push-refused://"
 # Every spelling of a GitHub remote git itself writes. Userinfo variants (https://user@github.com/...)
 # do not match these prefixes; the git shim refuses those pushes, and the role forbids pushing at all.
 GITHUB_PUSH_URLS = ("https://github.com/", "http://github.com/", "git@github.com:", "ssh://git@github.com/",
                     "ssh://github.com/")
-REFUSED_TOKEN = "agworkbench-refused"
+REFUSED_TOKEN = "wagflow-refused"
 WIN_SHAPED = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|//)")
 
 
@@ -88,7 +88,7 @@ def grant_trust(directory: str, home: Path | None = None) -> str:
     if path.exists():
         return f"already trusted: {directory}"
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".agworkbench-{os.getpid()}.tmp")
+    tmp = path.with_name(path.name + f".wagflow-{os.getpid()}.tmp")
     tmp.write_text(json.dumps({"root": directory, "trustedAt": int(time.time() * 1000)}), encoding="utf-8")
     os.replace(tmp, path)
     return f"trusted: {directory}"
@@ -104,7 +104,7 @@ def web_guard(allow_network: bool, home: Path | None = None) -> str | None:
     path = (home or kimi_home()) / "config.toml"
     fix = (f'add to {path}:\n\n  [tools]\n  disabled = ["FetchURL", "WebSearch"]\n\n'
            'or, if [tools] is already there, add both names to its disabled list. That turns them off for '
-           'every Kimi session on this machine. Or set "allowNetwork": true in ~/.agworkbench.json to let '
+           'every Kimi session on this machine. Or set "allowNetwork": true in ~/.wagflow.json to let '
            'the implementer use the web.')
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
@@ -154,7 +154,7 @@ def _render(template: Path, values: dict[str, str]) -> str:
 
 def _write_lf(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".agworkbench-{os.getpid()}.tmp")
+    tmp = path.with_name(path.name + f".wagflow-{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as stream:
         stream.write(text)
     os.replace(tmp, path)
@@ -179,7 +179,7 @@ def _exclude(checkout: Path) -> None:
 
 
 def environment(checkout: Path, bash: str) -> dict[str, str]:
-    state = checkout / ".workbench" / "state"
+    state = checkout / ".wagflow" / "state"
     env = {
         "KIMI_CODE_NO_AUTO_UPDATE": "1",
         "KIMI_SHELL_PATH": bash,
@@ -206,8 +206,8 @@ def prepare(checkout: str, issue: str, allow_network: bool, dry_run: bool = Fals
             raise Refused(f"{AGENTS_MD.as_posix()} is tracked in this repository; the Kimi implementer's role cannot "
                           "go there without changing it. Start this issue with another implementer.")
         if not role.read_text(encoding="utf-8", errors="replace").startswith(MARKER):
-            raise Refused(f"{role} exists and was not written by agworkbench; move it away to start the Kimi implementer")
-    shim_dir = root / ".workbench" / "state" / "kimi-bin"
+            raise Refused(f"{role} exists and was not written by wagflow; move it away to start the Kimi implementer")
+    shim_dir = root / ".wagflow" / "state" / "kimi-bin"
     network = ("The human allowed the network: you may use FetchURL and WebSearch." if allow_network else
                "The web tools (FetchURL, WebSearch) are off: the human has not allowed the network.")
     result = {"agentsMd": str(role), "shimDir": str(shim_dir), "bash": bash,

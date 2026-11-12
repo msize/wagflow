@@ -1,4 +1,4 @@
-"""Stateful, terminal-free agwintermctl fixture; never executes a supplied command."""
+"""Stateful, terminal-free wagtermctl fixture; never executes a supplied command."""
 
 import json
 import os
@@ -72,10 +72,10 @@ elif args[:2] == ["session", "new"]:
     name = option("--name")
     session_id = scenario["relay_id"] if name.endswith(" relay") else scenario["main_id"]
     if not name.endswith(' relay'):
-        identity = Path(option('--cwd')) / '.workbench/state/claude.json'
+        identity = Path(option('--cwd')) / '.wagflow/state/claude.json'
         scenario.setdefault('created_claude_identities', []).append(
             json.loads(identity.read_text(encoding='utf-8-sig')) if identity.exists() else None)
-        membership = Path(option('--cwd')) / '.workbench/state/queue-member.json'
+        membership = Path(option('--cwd')) / '.wagflow/state/queue-member.json'
         scenario.setdefault('created_queue_memberships', []).append(
             json.loads(membership.read_text(encoding='utf-8-sig')) if membership.exists() else None)
     workspace = next((w for w in tree["workspaces"] if w["name"] == option("--workspace-name")), None)

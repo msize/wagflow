@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""post - file one message into a workbench mailbox as a named, non-agent sender.
+"""post - file one message into a WagFlow mailbox as a named, non-agent sender.
 
 The review helpers (revmux, revdiff) are not agents and have no box of their own; registering one
 for them would put a fake agent in the registry. They post under a sender name instead, and the

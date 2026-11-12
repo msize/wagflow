@@ -1,7 +1,7 @@
 """The mailbox the agents and the review helpers share, in a temp directory.
 
 post.py is how revmux and revdiff report (they are not agents and get no box of their own), and
-agmsg is how the agents read. This pins that the two meet.
+wagmsg is how the agents read. This pins that the two meet.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ class Mailbox(unittest.TestCase):
                              "--sender", "revmux", "--kind", "review", "--subject", "revmux round 1: findings reported",
                              "--body-file", str(report))
         self.assertEqual(0, posted.returncode, posted.stderr)
-        listed = self.run_py(str(LIB / "agmsg.py"), "list", "--box", "claude")
+        listed = self.run_py(str(LIB / "wagmsg.py"), "list", "--box", "claude")
         self.assertIn("revmux round 1", listed.stdout)
-        read = self.run_py(str(LIB / "agmsg.py"), "read", "--box", "claude")
+        read = self.run_py(str(LIB / "wagmsg.py"), "read", "--box", "claude")
         self.assertIn("something is wrong", read.stdout)
         self.assertIn("from:    revmux", read.stdout)
 
@@ -45,15 +45,15 @@ class Mailbox(unittest.TestCase):
                              "--subject", "revmux round 2: tool error (exit 2)",
                              "--body-file", str(Path(self.tmp) / "missing.md"))
         self.assertEqual(0, posted.returncode, posted.stderr)
-        read = self.run_py(str(LIB / "agmsg.py"), "read", "--box", "claude")
+        read = self.run_py(str(LIB / "wagmsg.py"), "read", "--box", "claude")
         self.assertIn("(empty)", read.stdout)
 
     def test_ci_is_a_kind(self):
         # #94: the relay's CI result mail.
-        sent = self.run_py(str(LIB / "agmsg.py"), "send", "--to", "claude", "--force", "--kind", "ci",
+        sent = self.run_py(str(LIB / "wagmsg.py"), "send", "--to", "claude", "--force", "--kind", "ci",
                            "--subject", "CI finished on aaaaaaa: 1 passed, 0 failed", "--text", "t")
         self.assertEqual(0, sent.returncode, sent.stderr)
-        read = self.run_py(str(LIB / "agmsg.py"), "read", "--box", "claude")
+        read = self.run_py(str(LIB / "wagmsg.py"), "read", "--box", "claude")
         self.assertIn("kind:    ci", read.stdout)
 
     def test_a_box_name_cannot_escape_the_mailbox(self):

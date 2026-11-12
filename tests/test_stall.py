@@ -21,7 +21,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agw  # noqa: E402
+import wag  # noqa: E402
 import closer  # noqa: E402
 import hub  # noqa: E402
 import peerchat  # noqa: E402
@@ -36,27 +36,27 @@ S = 15          # stallMinutes in these tests
 class StallFixture(unittest.TestCase):
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test stall ' + uuid.uuid4().hex)
-        self.hub_dir = self.folder / '.workbench'
+        self.hub_dir = self.folder / '.wagflow'
         (self.hub_dir / 'state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder, True)
         self.addCleanup(hub.reload_paths)
         config = self.folder / 'config.json'
         config.write_text('{}', encoding='utf-8')
-        # The human's real ~/.agworkbench.json never reaches a result here.
-        self.enterContext(patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(config)}))
+        # The human's real ~/.wagflow.json never reaches a result here.
+        self.enterContext(patch.dict(os.environ, {'WAGFLOW_CONFIG': str(config)}))
         self.t = 0.0
         self.enterContext(patch.object(relay, 'now', lambda: self.t))
         self.enterContext(patch.object(relay, 'wall', lambda: 1_000_000 + self.t))
         self.head = 'a' * 40
         self.enterContext(patch.object(relay, 'git_head', lambda root: self.head))
         self.text = {PLANNER: CLAUDE_IDLE, IMPLEMENTER: CODEX_IDLE, HELPER: 'running tests ...'}
-        self.enterContext(patch.object(agw, 'pane_text', side_effect=self.pane_text))
+        self.enterContext(patch.object(wag, 'pane_text', side_effect=self.pane_text))
         self.sessions = [{'id': 'issue', 'name': '#7 fix', 'paneIds': [PLANNER, IMPLEMENTER]}]
-        self.enterContext(patch.object(agw, 'tree', side_effect=lambda: {
+        self.enterContext(patch.object(wag, 'tree', side_effect=lambda: {
             'workspaces': [{'name': 'repo', 'sessions': self.sessions}]}))
-        self.status = self.enterContext(patch.object(agw, 'set_status'))
-        self.notify = self.enterContext(patch.object(agw, 'notify'))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('real terminal request')))
+        self.status = self.enterContext(patch.object(wag, 'set_status'))
+        self.notify = self.enterContext(patch.object(wag, 'notify'))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('real terminal request')))
         self.r = self.make_relay()
 
     def make_relay(self, minutes=S, dry_run=False):
@@ -122,8 +122,8 @@ class Pointer(StallFixture):
     def test_the_pointer_names_the_implementers_last_line(self):
         self.run_until(S)
         body = self.stall_mail()[0]['body']
-        self.assertIn("The implementer's last line: • No unread mail. Waiting for the next “Chat from Workbench:” "
-                      "notification; no files edited.", body)
+        last_line = " ".join(line.strip() for line in CODEX_IDLE.splitlines()[:2])
+        self.assertIn("The implementer's last line: " + last_line, body)
 
     def test_the_relay_rings_the_planner_with_the_pointer_without_any_waiter(self):
         # Criterion 7: a planner whose waiter was killed is still woken - the relay rings mail itself.
@@ -135,7 +135,7 @@ class Pointer(StallFixture):
         self.assertIn('stall: loop idle for 15 min', send.call_args.args[2])
 
     def test_the_setting_comes_from_the_config_or_the_flag(self):
-        path = Path(os.environ['AGWORKBENCH_CONFIG'])
+        path = Path(os.environ['WAGFLOW_CONFIG'])
         for text, expected in (('{}', 15.0), ('{"stallMinutes": 0}', 0.0), ('{"stallMinutes": 7.5}', 7.5),
                                ('{"stallMinutes": -1}', 15.0), ('{"stallMinutes": "5"}', 15.0),
                                ('{"stallMinutes": true}', 15.0), ('not json', 15.0)):
@@ -163,7 +163,7 @@ class Wiring(StallFixture):
 
     def test_main_takes_the_period_from_the_config_or_the_flag(self):
         self.assertEqual(15 * 60, self.relay_from_main().stall.period)
-        Path(os.environ['AGWORKBENCH_CONFIG']).write_text('{"stallMinutes": 4}', encoding='utf-8')
+        Path(os.environ['WAGFLOW_CONFIG']).write_text('{"stallMinutes": 4}', encoding='utf-8')
         self.assertEqual(4 * 60, self.relay_from_main().stall.period)
         self.assertEqual(2 * 60, self.relay_from_main('--stall-minutes', '2').stall.period)
         self.assertEqual(0, self.relay_from_main('--stall-minutes', '0').stall.period)
@@ -397,7 +397,7 @@ class NoFalseStalls(StallFixture):
 
     def test_panes_not_provably_idle(self):
         for pane, frame in ((PLANNER, CLAUDE_RUNNING), (PLANNER, claude('a draft')), (IMPLEMENTER, codex('a draft')),
-                            (IMPLEMENTER, agw.CtlError('no pipe')), (IMPLEMENTER, 'plain shell PS C:\\>')):
+                            (IMPLEMENTER, wag.CtlError('no pipe')), (IMPLEMENTER, 'plain shell PS C:\\>')):
             with self.subTest(pane=pane, frame=str(frame)[:30]):
                 self.r = self.make_relay()
                 saved = self.text[pane]
@@ -723,7 +723,7 @@ class CiStuck(StallFixture):
 
 class LastWords(unittest.TestCase):
     def test_codex_last_paragraph_above_the_composer_not_the_footer(self):
-        self.assertEqual('• No unread mail. Waiting for the next “Chat from Workbench:” notification; no files edited.',
+        self.assertEqual(" ".join(line.strip() for line in CODEX_IDLE.splitlines()[:2]),
                          relay.last_words(CODEX_IDLE, 'codex'))
 
     def test_claude_answer_above_the_turn_timer(self):
@@ -786,7 +786,7 @@ class StallProse(unittest.TestCase):
         text = self.text('claude/commands/start-github-issue.md')
         section = text.split('## Stall pointers')[1].split('## Adopted session')[0]
         for needle in ('kind `stall`', 'Check your background waiter', 'mail from `helper`',
-                       '`.workbench/state/waiting.json`', 'That record is a latch',
+                       '`.wagflow/state/waiting.json`', 'That record is a latch',
                        'run `wb.py status active`', '`loop-state resumed`', 'reason starting `stalled:`',
                        'no CI still running on an auto-merge PR', 'no usage-limit episode'):
             self.assertIn(needle, section)
@@ -817,15 +817,15 @@ class StallProse(unittest.TestCase):
             self.assertIn(needle, readme)
 
     def test_implementers_never_hide_a_suite_in_a_background_watcher(self):
-        self.assertIn('wb.py" suite --label <sha7> -- <command>`', self.text('claude/commands/workbench-implementer.md'))
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md',
+        self.assertIn('wb.py" suite --label <sha7> -- <command>`', self.text('claude/commands/wagflow-implementer.md'))
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md',
                      'kimi/AGENTS.md'):
             with self.subTest(path=path):
                 self.assertIn('looks like a stalled loop to the relay', self.text(path))
 
     def test_every_implementer_role_knows_a_final_round(self):
         # #64 / #65 FIX r3: the Kimi role (kimi/AGENTS.md) keeps up with the Codex and Claude ones.
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md',
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md',
                      'kimi/AGENTS.md'):
             with self.subTest(path=path):
                 text = ' '.join(self.text(path).split())

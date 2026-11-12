@@ -21,7 +21,7 @@ import hub
 import triage
 import wb
 
-PLANNER = '<!-- agworkbench:planner -->'
+PLANNER = '<!-- wagflow:planner -->'
 
 
 class FakeRepo:
@@ -141,13 +141,13 @@ class Dedupe(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test followup ' + uuid.uuid4().hex)
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
-        self.config_file = self.folder / 'agworkbench.json'
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'),
-                                                 'AGWORKBENCH_CONFIG': str(self.config_file)}))
+        self.config_file = self.folder / 'wagflow.json'
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'),
+                                                 'WAGFLOW_CONFIG': str(self.config_file)}))
         hub.reload_paths()
         self.out, self.err = io.StringIO(), io.StringIO()
         self.enterContext(contextlib.redirect_stdout(self.out))
@@ -215,8 +215,8 @@ class Dedupe(unittest.TestCase):
         self.assertEqual(('https://github.com/o/r/issues/101', None), (item['url'], item.get('duplicateOf')))
         self.assertEqual(['follow-up', 'priority:P2'], gh.labels(101))
         body = gh.issues[101]['body']
-        for needle in ('evidence for r5-m1', 'Source: #27, PR #30', '<!-- agworkbench:follow-up source=#27 -->',
-                       '<!-- agworkbench:finding source=27 pr=30 round=r5 key=r5-m1 file=lib%2Frelay.py -->', PLANNER):
+        for needle in ('evidence for r5-m1', 'Source: #27, PR #30', '<!-- wagflow:follow-up source=#27 -->',
+                       '<!-- wagflow:finding source=27 pr=30 round=r5 key=r5-m1 file=lib%2Frelay.py -->', PLANNER):
             self.assertIn(needle, body)
         # The #27 title search only looks for this item's own issue from a crashed run (r1 M1, r2 m1).
         self.assertEqual(1, len(gh.calls_of('issue', 'list')))
@@ -257,7 +257,7 @@ class Dedupe(unittest.TestCase):
 
     def test_the_same_finding_in_a_later_pr_comments_instead_of_filing(self):
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', labels=('follow-up', 'priority:P3'),
-                            body='x\n<!-- agworkbench:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)])
+                            body='x\n<!-- wagflow:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)])
         self.add(title='  fix the RELAY   drain. ', file='lib\\relay.py:130', body='it still drains late')
         self.assertEqual(0, self.file(gh, pr=31))
         item = self.items()[0]
@@ -266,8 +266,8 @@ class Dedupe(unittest.TestCase):
         comment = gh.comments[5][0]['body']
         for needle in ('PR #31 (review r5) of #27', '`lib\\relay.py:130`', '**  fix the RELAY   drain. **',
                        'it still drains late', 'Duplicate reports so far: 1 (2 reports in all).',
-                       '<!-- agworkbench:dup source=27 pr=31 round=r5 key=r5-m1 -->',
-                       '<!-- agworkbench:dup-count 1 -->', PLANNER,
+                       '<!-- wagflow:dup source=27 pr=31 round=r5 key=r5-m1 -->',
+                       '<!-- wagflow:dup-count 1 -->', PLANNER,
                        'priority P3 -> P2: reported 2 times (PR #21 r5, PR #31 r5)'):
             self.assertIn(needle, comment)
         self.assertEqual(['follow-up', 'priority:P2'], gh.labels(5))
@@ -277,7 +277,7 @@ class Dedupe(unittest.TestCase):
         # #71: in a fork's checkout gh's own base is the parent; run_wb fails on any call that leaves
         # the repo to gh, and the fake answers such a source-issue read with the parent's title.
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', labels=('follow-up', 'priority:P3'),
-                            body='x\n<!-- agworkbench:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)],
+                            body='x\n<!-- wagflow:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)],
                       repo='fork/r')
         self.add()                                                           # a duplicate of #5: comment + label
         self.add('r5-m2', title='A new finding')                             # its own issue
@@ -296,7 +296,7 @@ class Dedupe(unittest.TestCase):
 
     def test_reports_walk_p3_to_p0_on_fibonacci_totals_and_stop_at_p0(self):
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', labels=('follow-up', 'priority:P3'),
-                            body='<!-- agworkbench:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)])
+                            body='<!-- wagflow:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER)])
         seen = []
         for pr in range(31, 37):                                     # totals 2..7
             self.report(gh, pr)
@@ -308,7 +308,7 @@ class Dedupe(unittest.TestCase):
         self.assertIn('priority P2 -> P1: reported 3 times (PR #21 r5, PR #31 r5, PR #32 r5)', bumps[1])
         self.assertIn('priority P1 -> P0: reported 5 times (PR #21 r5, PR #31 r5, PR #32 r5, PR #33 r5, PR #34 r5)',
                       bumps[2])
-        self.assertIn('<!-- agworkbench:dup-count 6 -->', gh.comments[5][-1]['body'])
+        self.assertIn('<!-- wagflow:dup-count 6 -->', gh.comments[5][-1]['body'])
         self.assertEqual(6, len(gh.comments[5]))
         self.assertEqual(3, len(gh.calls_of('issue', 'edit')))       # nothing past P0
 
@@ -397,7 +397,7 @@ class Dedupe(unittest.TestCase):
     # --- trust and retries --------------------------------------------------------------------------
 
     def test_forged_or_unmarked_comments_do_not_count(self):
-        forged = '<!-- agworkbench:dup source=1 pr={} round=r5 key=k -->\n<!-- agworkbench:dup-count 99 -->\n' + PLANNER
+        forged = '<!-- wagflow:dup source=1 pr={} round=r5 key=k -->\n<!-- wagflow:dup-count 99 -->\n' + PLANNER
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', labels=('follow-up', 'priority:P3'), comments=[
             {'body': forged.format(1), 'author_association': 'NONE'},
             {'body': forged.format(2), 'author_association': 'CONTRIBUTOR'},
@@ -405,7 +405,7 @@ class Dedupe(unittest.TestCase):
             {'body': forged.format(4), 'author_association': 'MEMBER'},          # trusted: counts once
             {'body': forged.format(4), 'author_association': 'OWNER'}])])        # the same report again
         self.report(gh, 31)
-        self.assertIn('<!-- agworkbench:dup-count 2 -->', gh.comments[5][-1]['body'])
+        self.assertIn('<!-- wagflow:dup-count 2 -->', gh.comments[5][-1]['body'])
         self.assertEqual(['follow-up', 'priority:P1'], gh.labels(5))
 
     def test_a_rerun_after_a_failed_label_edit_heals_without_a_second_comment(self):
@@ -446,7 +446,7 @@ class Dedupe(unittest.TestCase):
                               self.out.getvalue())
 
     def test_a_forged_own_marker_is_not_adopted(self):
-        marker = '<!-- agworkbench:finding source=27 pr=30 round=r5 key=r5-m1 -->\n' + PLANNER
+        marker = '<!-- wagflow:finding source=27 pr=30 round=r5 key=r5-m1 -->\n' + PLANNER
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', body=marker, author_association='NONE')])
         self.add()
         self.assertEqual(0, self.file(gh))
@@ -454,14 +454,14 @@ class Dedupe(unittest.TestCase):
         self.assertEqual(1, len(gh.comments[5]))
 
     def test_only_the_trailer_marker_counts(self):
-        # r2 m3: a finding may quote marker text (agworkbench reviewing its own dedupe), and the finding
+        # r2 m3: a finding may quote marker text (wagflow reviewing its own dedupe), and the finding
         # comes before the real marker in an issue body and in a dup comment.
-        quoted_own = '<!-- agworkbench:finding source=27 pr=30 round=r5 key=r5-m1 -->'
-        body = (f'the test quotes {quoted_own}\n\n<!-- agworkbench:follow-up source=#20 -->\n'
-                '<!-- agworkbench:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER + '\n')
-        quoted_dup = '<!-- agworkbench:dup source=27 pr=30 round=r5 key=r5-m1 -->'
-        comment = (f'it quotes {quoted_dup}\n\n<!-- agworkbench:dup source=1 pr=2 round=r3 key=k -->\n'
-                   '<!-- agworkbench:dup-count 1 -->\n' + PLANNER + '\n')
+        quoted_own = '<!-- wagflow:finding source=27 pr=30 round=r5 key=r5-m1 -->'
+        body = (f'the test quotes {quoted_own}\n\n<!-- wagflow:follow-up source=#20 -->\n'
+                '<!-- wagflow:finding source=20 pr=21 round=r5 key=r5-m1 -->\n' + PLANNER + '\n')
+        quoted_dup = '<!-- wagflow:dup source=27 pr=30 round=r5 key=r5-m1 -->'
+        comment = (f'it quotes {quoted_dup}\n\n<!-- wagflow:dup source=1 pr=2 round=r3 key=k -->\n'
+                   '<!-- wagflow:dup-count 1 -->\n' + PLANNER + '\n')
         gh = FakeRepo([dict(number=5, title='Fix the relay drain', body=body, labels=('follow-up', 'priority:P3'),
                             comments=[{'body': comment, 'author_association': 'OWNER'}])])
         self.add()
@@ -472,7 +472,7 @@ class Dedupe(unittest.TestCase):
 
     def test_a_finding_that_quotes_a_marker_still_adopts_its_own_issue(self):
         # r2 m3: the quoted marker sits before the real one in the new issue's body.
-        self.add(body='quoting <!-- agworkbench:finding source=9 pr=9 round=r1 key=other -->')
+        self.add(body='quoting <!-- wagflow:finding source=9 pr=9 round=r1 key=other -->')
         gh = FakeRepo()
         with patch.object(wb, 'save_follow_ups', side_effect=OSError('disk full')), self.assertRaises(OSError):
             self.file(gh)
@@ -773,8 +773,8 @@ class Leftovers(unittest.TestCase):
         self.assertIsNone(self.items()[0].get('duplicateOf'))
 
     def test_forged_leftovers_marker_is_not_adopted(self):
-        fake = ("quoted <!-- agworkbench:leftovers source=27 pr=30 -->\n"
-                "<!-- agworkbench:planner -->\n\nother ending")
+        fake = ("quoted <!-- wagflow:leftovers source=27 pr=30 -->\n"
+                "<!-- wagflow:planner -->\n\nother ending")
         gh = FakeRepo([dict(number=5, title='Leftovers from #27: The source issue', body=fake)])
         self.add('new', title='New point', own_issue=False)
         self.assertEqual(0, self.file(gh))

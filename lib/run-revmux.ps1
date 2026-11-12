@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-  One revmux review round for this workbench, run in its own visible session, report posted to
+  One revmux review round for this wagflow, run in its own visible session, report posted to
   Claude's mailbox when it finishes.
 
 .DESCRIPTION
   Claude writes the scope (it knows the plan and what changed) and launches this:
 
-    agwintermctl session new --name "#N revmux r1" --cwd <checkout> --no-select `
+    wagtermctl session new --name "#N revmux r1" --cwd <checkout> --no-select `
       --command "pwsh -NoLogo -ExecutionPolicy Bypass -File <lib>\run-revmux.ps1 -Checkout <checkout> -ScopeFile <file> -Round 1"
 
-  wb.py revmux does this through a launch file (.workbench\state\helpers\launch-revmux-r<K>.ps1, or
+  wb.py revmux does this through a launch file (.wagflow\state\helpers\launch-revmux-r<K>.ps1, or
   launch-revmux-r<K>-<n>.ps1 for rerun attempt n) that calls this script with its parameters, so the
-  session's command line stays inside agwinterm's limits however long they are (#86).
+  session's command line stays inside WagTerm's limits however long they are (#86).
 
   The revmux TUI stays on screen in that session. stdout is the report and stderr is progress,
   so only stdout goes to the file - merging them makes the report unreadable. When revmux exits the
@@ -19,7 +19,7 @@
 
   Exit 1 from revmux means findings were reported. It is a success.
 
-  The run it used is recorded in .workbench/review/revmux-r<Round>.json ({run, dir, profile, attempt,
+  The run it used is recorded in .wagflow/review/revmux-r<Round>.json ({run, dir, profile, attempt,
   scope}): wb.py review-round reads the run's events.jsonl from `dir` to tell a reviewer's usage limit
   from any other degraded source (#77). A rerun of a round (wb.py revmux --rerun) passes its own -Run
   (r<Round>-<n>: revmux refuses a round that has already run) and -Attempt, and -After M first waits
@@ -34,9 +34,9 @@ param([Parameter(Mandatory = $true)] [string] $Checkout,
       [int] $After = 0)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
 Set-Location -LiteralPath $Checkout
-$hubDir = Join-Path $Checkout '.workbench'
+$hubDir = Join-Path $Checkout '.wagflow'
 $reviewDir = Join-Path $hubDir 'review'
 New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null
 $report = Join-Path $reviewDir "revmux-r$Round.md"
@@ -63,7 +63,7 @@ if ($After -gt 0) {
         Start-Sleep -Seconds ([math]::Min(60, [math]::Max(1, ($start - (Get-Date)).TotalSeconds)))
     }
 }
-$created = & revmux new --task workbench --run $run | Out-String
+$created = & revmux new --task wagflow --run $run | Out-String
 if ($LASTEXITCODE -ne 0) { throw "revmux new failed: $created" }
 $paths = $created | ConvertFrom-Json
 Copy-Item -LiteralPath $ScopeFile -Destination $paths.scope -Force
@@ -72,7 +72,7 @@ $record = [pscustomobject]@{ run = $run; dir = [string]$paths.round_dir; profile
 Write-AtomicJson (Join-Path $reviewDir "revmux-r$Round.json") $record
 
 Write-Host "revmux round $Round (run $run), profile $Profile -> $report" -ForegroundColor Cyan
-& revmux --task workbench --run $run --profile $Profile --markdown | Out-File -FilePath $report -Encoding utf8
+& revmux --task wagflow --run $run --profile $Profile --markdown | Out-File -FilePath $report -Encoding utf8
 $code = $LASTEXITCODE
 $verdict = switch ($code) { 0 { 'clean' } 1 { 'findings reported' } default { "tool error (exit $code)" } }
 

@@ -1,15 +1,15 @@
 # Vendored from the ai-hub tooling (MIT, same author). Kept close to the original on purpose:
 # it is the tested half of this project - see tests/ there and here.
-"""Thin helper around agwinterm's control API.
+"""Thin helper around WagTerm's control API.
 
-Windows/agwinterm analog of the agtermctl calls in umputun's cookbook/two-agent-chat recipe.
+Windows/wagterm analog of the agtermctl calls in umputun's cookbook/two-agent-chat recipe.
 
 Two transports, in this order:
 
-1. The control pipe (`\\\\.\\pipe\\%AGWINTERM_PIPE%`) directly. One newline-delimited JSON request,
+1. The control pipe (`\\\\.\\pipe\\%WAGTERM_PIPE%`) directly. One newline-delimited JSON request,
    one JSON response, both UTF-8. This is the transport that matters: reading a pane means reading
    box-drawing glyphs and Codex's `>` prompt chevron, and those survive the pipe intact.
-2. The `agwintermctl` binary, when the pipe cannot be opened. .NET writes its stdout in the
+2. The `wagtermctl` binary, when the pipe cannot be opened. .NET writes its stdout in the
    console's code page - 437 here - which turns every glyph outside it into `?`, so the fallback
    flips the console to UTF-8 for the duration of the call and puts it back afterwards.
 """
@@ -27,20 +27,20 @@ from pathlib import Path
 from typing import Any, Iterator
 
 CANDIDATES = [
-    Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "agwinterm" / "agwintermctl.exe",
-    Path.home() / "source" / "agwinterm" / "src" / "Agwinterm.Ctl" / "bin" / "Release" / "net10.0-windows" / "agwintermctl.exe",
+    Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "wagterm" / "wagtermctl.exe",
+    Path.home() / "source" / "wagterm" / "src" / "Wagterm.Ctl" / "bin" / "Release" / "net10.0-windows" / "wagtermctl.exe",
 ]
 CP_UTF8 = 65001
 
 
 class CtlError(RuntimeError):
-    """agwinterm refused the request, or could not be reached at all."""
+    """wagterm refused the request, or could not be reached at all."""
 
 
 # --- transport ------------------------------------------------------------------------------
 
 def pipe_name() -> str:
-    return os.environ.get("AGWINTERM_PIPE") or "agwinterm"
+    return os.environ.get("WAGTERM_PIPE") or "wagterm"
 
 
 def _open_pipe():
@@ -87,7 +87,7 @@ def _via_pipe(payload: dict[str, Any], timeout: float) -> dict[str, Any] | None:
     result: dict[str, Any] = {}
     worker = threading.Thread(
         target=lambda: _run_roundtrip(handle, payload, result),
-        daemon=True, name="agw-pipe",
+        daemon=True, name="wag-pipe",
     )
     try:
         worker.start()
@@ -120,19 +120,19 @@ def _via_pipe(payload: dict[str, Any], timeout: float) -> dict[str, Any] | None:
 
 
 def ctl_path() -> str:
-    """Resolve agwintermctl: $AGWINTERMCTL, then PATH, then the known install locations."""
-    explicit = os.environ.get("AGWINTERMCTL")
+    """Resolve wagtermctl: $WAGTERMCTL, then PATH, then the known install locations."""
+    explicit = os.environ.get("WAGTERMCTL")
     if explicit:
         return explicit
-    found = shutil.which("agwintermctl")
+    found = shutil.which("wagtermctl")
     if found:
         return found
     for candidate in CANDIDATES:
         if candidate.is_file():
             return str(candidate)
     raise CtlError(
-        "agwintermctl not found and the control pipe is unreachable. "
-        "Run `agwintermctl install cli` once, or set AGWINTERMCTL to its full path."
+        "wagtermctl not found and the control pipe is unreachable. "
+        "Run `wagtermctl install cli` once, or set WAGTERMCTL to its full path."
     )
 
 
@@ -150,23 +150,23 @@ def _console_utf8():
 
 
 def _via_cli(payload: dict[str, Any], timeout: float) -> dict[str, Any]:
-    """Fallback: hand the same request to agwintermctl and read its raw JSON envelope."""
+    """Fallback: hand the same request to wagtermctl and read its raw JSON envelope."""
     args = [ctl_path()] + _cli_args(payload) + ["--json"]
     restore = _console_utf8()
     try:
         done = subprocess.run(args, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as err:
-        raise CtlError(f"agwintermctl timed out: {payload.get('cmd')}") from err
+        raise CtlError(f"wagtermctl timed out: {payload.get('cmd')}") from err
     finally:
         restore()
     out = (done.stdout or b"").decode("utf-8", errors="replace").strip()
     if done.returncode != 0 and not out:
         detail = (done.stderr or b"").decode("utf-8", errors="replace").strip() or f"exit {done.returncode}"
-        raise CtlError(f"agwintermctl {payload.get('cmd')}: {detail}")
+        raise CtlError(f"wagtermctl {payload.get('cmd')}: {detail}")
     try:
         return json.loads(out)
     except json.JSONDecodeError as err:
-        raise CtlError(f"agwintermctl returned non-JSON: {out[:200]!r}") from err
+        raise CtlError(f"wagtermctl returned non-JSON: {out[:200]!r}") from err
 
 
 def _cli_args(payload: dict[str, Any]) -> list[str]:
@@ -272,8 +272,8 @@ def find_pane(pane_id: str, snapshot: dict[str, Any] | None = None):
 
 
 def my_pane() -> str | None:
-    """This process's own pane. AGWINTERM_PANE_ID is per-pane, so a split never collides."""
-    return os.environ.get("AGWINTERM_PANE_ID") or os.environ.get("AGWINTERM_SESSION_ID") or None
+    """This process's own pane. WAGTERM_PANE_ID is per-pane, so a split never collides."""
+    return os.environ.get("WAGTERM_PANE_ID") or os.environ.get("WAGTERM_SESSION_ID") or None
 
 
 def pane_text(pane_id: str) -> str:

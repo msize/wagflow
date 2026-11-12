@@ -98,7 +98,7 @@ class Clock:
         self.t += seconds
 
 
-class FakeAgw:
+class FakeWag:
     def __init__(self, tool='codex', frames=None, after=None, cursors=None):
         self.tool = tool
         self.frames = list(frames) if frames else None
@@ -133,8 +133,8 @@ class FakeAgw:
         self.cursor_reads += 1
         if not self.cursors:
             # Old fixtures have no cursor evidence; preserve text-only classification.
-            import agw
-            raise agw.CtlError('cursor unavailable in fixture')
+            import wag
+            raise wag.CtlError('cursor unavailable in fixture')
         value = self.cursors.pop(0) if len(self.cursors) > 1 else self.cursors[0]
         if isinstance(value, Exception):
             raise value

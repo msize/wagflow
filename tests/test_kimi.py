@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,7 @@ def git(cwd: Path, *args: str) -> str:
 
 class Temp(unittest.TestCase):
     def setUp(self):
-        self.temp = Path(tempfile.mkdtemp(prefix="agw-kimi-"))
+        self.temp = Path(tempfile.mkdtemp(prefix="wag-kimi-"))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
         self.home = self.temp / "kimi-home"
         self.home.mkdir()
@@ -132,7 +133,7 @@ class Prepare(Temp):
         exclude = (checkout / ".git/info/exclude").read_text(encoding="utf-8").splitlines()
         self.assertEqual(1, exclude.count(kimi.EXCLUDE_LINE))
         self.assertIn("you may use FetchURL", (checkout / ".kimi-code/AGENTS.md").read_text(encoding="utf-8"))
-        shims = checkout / ".workbench/state/kimi-bin"
+        shims = checkout / ".wagflow/state/kimi-bin"
         for name in ("git", "gh", "env.sh"):
             with self.subTest(shim=name):
                 data = (shims / name).read_bytes()
@@ -147,12 +148,12 @@ class Prepare(Temp):
         env = kimi.prepare(str(checkout), "o/repo#7", allow_network=False, dry_run=True, home=self.home)["env"]
         self.assertEqual("1", env["KIMI_CODE_NO_AUTO_UPDATE"])
         self.assertTrue(env["KIMI_SHELL_PATH"].lower().endswith("\\bin\\bash.exe"))
-        self.assertTrue(env["BASH_ENV"].endswith("/.workbench/state/kimi-bin/env.sh"))
-        self.assertEqual("agworkbench-refused", env["GH_TOKEN"])
+        self.assertTrue(env["BASH_ENV"].endswith("/.wagflow/state/kimi-bin/env.sh"))
+        self.assertEqual("wagflow-refused", env["GH_TOKEN"])
         self.assertEqual("5", env["GIT_CONFIG_COUNT"])
         self.assertEqual({"https://github.com/", "http://github.com/", "git@github.com:", "ssh://git@github.com/",
                           "ssh://github.com/"}, {env[f"GIT_CONFIG_VALUE_{i}"] for i in range(5)})
-        self.assertEqual({"url.agworkbench-push-refused://.pushInsteadOf"}, {env[f"GIT_CONFIG_KEY_{i}"] for i in range(5)})
+        self.assertEqual({"url.wagflow-push-refused://.pushInsteadOf"}, {env[f"GIT_CONFIG_KEY_{i}"] for i in range(5)})
         self.assertFalse((checkout / ".kimi-code").exists())        # a dry run writes nothing
         self.assertFalse((self.home / "workspace-trust").exists())
 
@@ -163,7 +164,7 @@ class Prepare(Temp):
         role.write_text("the repository's own notes\n", encoding="utf-8")
         with self.assertRaises(kimi.Refused) as caught:
             kimi.prepare(str(checkout), "o/repo#7", allow_network=False, home=self.home)
-        self.assertIn("not written by agworkbench", str(caught.exception))
+        self.assertIn("not written by wagflow", str(caught.exception))
         git(checkout, "add", ".kimi-code/AGENTS.md")
         with self.assertRaises(kimi.Refused) as caught:
             kimi.prepare(str(checkout), "o/repo#7", allow_network=False, home=self.home)
@@ -192,8 +193,8 @@ class GuardRails(Temp):
         super().setUp()
         # Not under %TEMP%: MSYS spells that /tmp/..., a spelling the shim path never has, which once
         # hid a guard that skipped the prepend whenever the shim was anywhere on PATH (FIX r1 M1). A
-        # real checkout is /c/..., like this one (inside the repository's ignored .workbench/).
-        parent = ROOT / ".workbench" / f"test-kimi-{os.getpid()}-{id(self)}{self.SUFFIX}"
+        # real checkout is /c/..., like this one (inside the repository's ignored .wagflow/).
+        parent = ROOT / ".wagflow" / f"test-kimi-{os.getpid()}-{id(self)}{self.SUFFIX}"
         parent.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
         self.checkout = parent / "repo-issue-7"
@@ -214,13 +215,21 @@ class GuardRails(Temp):
         return subprocess.run([BASH, "-c", f"cd '{cwd}' && {command}"], env=self.env, capture_output=True,
                               text=True, encoding="utf-8", errors="replace", timeout=60)
 
+    def default_git(self) -> str:
+        done = subprocess.run([BASH, "-c", "command -v git"], env=dict(os.environ),
+                              capture_output=True, text=True, check=True)
+        executable = done.stdout.strip()
+        self.assertTrue(executable.startswith("/"), executable)
+        self.assertNotIn("/.wagflow/", executable)
+        return executable
+
     def test_git_resolves_to_the_shim_in_kimis_shell(self):
         done = self.bash("command -v git")
-        self.assertTrue(done.stdout.strip().endswith("/.workbench/state/kimi-bin/git"), done.stdout + done.stderr)
+        self.assertTrue(done.stdout.strip().endswith("/.wagflow/state/kimi-bin/git"), done.stdout + done.stderr)
         # Without BASH_ENV, Git Bash's own git wins: the reason BASH_ENV is there.
-        plain = subprocess.run([BASH, "-c", "command -v git"], env=dict(os.environ, PATH=str(self.checkout / ".workbench/state/kimi-bin") + os.pathsep + os.environ["PATH"]),
+        plain = subprocess.run([BASH, "-c", "command -v git"], env=dict(os.environ, PATH=str(self.checkout / ".wagflow/state/kimi-bin") + os.pathsep + os.environ["PATH"]),
                                capture_output=True, text=True)
-        self.assertEqual("/mingw64/bin/git", plain.stdout.strip())
+        self.assertEqual(self.default_git(), plain.stdout.strip())
 
     def test_push_in_any_spelling_the_shim_sees_is_refused(self):
         for command in ("git push origin HEAD", "git -C . push", "git -c a.b=c push origin HEAD",
@@ -231,12 +240,12 @@ class GuardRails(Temp):
                 self.assertIn("refused in the Kimi implementer's pane", done.stderr)
 
     def test_the_backstop_stops_a_push_that_gets_past_the_shim(self):
-        for command in ("git.exe push origin HEAD", "/mingw64/bin/git push origin HEAD",
+        for command in ("git.exe push origin HEAD", shlex.quote(self.default_git()) + " push origin HEAD",
                         "cmd //c git push origin HEAD"):
             with self.subTest(command=command):
                 done = self.bash(command)
                 self.assertNotEqual(0, done.returncode, done.stdout + done.stderr)
-                self.assertIn("agworkbench-push-refused", done.stderr)
+                self.assertIn("wagflow-push-refused", done.stderr)
         # Every GitHub spelling git writes is rewritten for push.
         for url in ("http://github.com/o/repo.git", "ssh://github.com/o/repo.git", "git@github.com:o/repo.git",
                     "ssh://git@github.com/o/repo.git"):
@@ -244,11 +253,11 @@ class GuardRails(Temp):
                 git(self.checkout, "remote", "set-url", "origin", url)
                 done = self.bash("git.exe push origin HEAD")
                 self.assertNotEqual(0, done.returncode)
-                self.assertIn("agworkbench-push-refused", done.stderr)
+                self.assertIn("wagflow-push-refused", done.stderr)
         git(self.checkout, "remote", "set-url", "origin", "https://github.com/o/repo.git")
         # Fetch URLs are not rewritten.
         self.assertIn("https://github.com/o/repo.git (fetch)", self.bash("git.exe remote -v").stdout)
-        self.assertIn("agworkbench-push-refused://o/repo.git (push)", self.bash("git.exe remote -v").stdout)
+        self.assertIn("wagflow-push-refused://o/repo.git (push)", self.bash("git.exe remote -v").stdout)
 
     def test_ordinary_git_passes_through(self):
         self.assertEqual(0, self.bash("git status --short").returncode)
@@ -260,7 +269,7 @@ class GuardRails(Temp):
         done = self.bash("gh pr list")
         self.assertNotEqual(0, done.returncode)
         self.assertIn("planner", done.stderr)
-        self.assertEqual("agworkbench-refused", self.bash("echo $GH_TOKEN").stdout.strip())
+        self.assertEqual("wagflow-refused", self.bash("echo $GH_TOKEN").stdout.strip())
 
 
 class GuardRailsInAnOddPath(GuardRails):

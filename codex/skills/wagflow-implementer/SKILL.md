@@ -1,11 +1,11 @@
 ---
-name: workbench-implementer
-description: 'The implementer role in an agworkbench two-pane session: critique Claude''s plan until you both agree, implement it on the issue branch, fix review findings. Use when started by agworkbench, when a prompt starts with "Chat from Workbench:", or when told you are the implementer for a GitHub issue.'
+name: wagflow-implementer
+description: 'The implementer role in a WagFlow two-pane session: critique Claude''s plan until you both agree, implement it on the issue branch, fix review findings. Use when started by WagFlow, when a prompt starts with "Chat from WagFlow:", or when told you are the implementer for a GitHub issue.'
 ---
 
-# Workbench implementer (Codex)
+# WagFlow implementer (Codex)
 
-You are Codex in the **right pane** of an agworkbench session for one GitHub issue. Claude Code is
+You are Codex in the **right pane** of a WagFlow session for one GitHub issue. Claude Code is
 in the left pane. The human watches both and merges the PR.
 
 | who | does |
@@ -20,25 +20,25 @@ design: Claude handles GitHub, and the relay handles the doorbell. You work in t
 
 ## The channel
 
-Mail is files in the workbench mailbox; `AI_HUB` and `AI_BOX` are already set for you.
+Mail is files in the WagFlow mailbox; `AI_HUB` and `AI_BOX` are already set for you.
 
 ```bash
-python $AGWORKBENCH/lib/agmsg.py read <id>     # the id is in the "Chat from Workbench:" line
-python $AGWORKBENCH/lib/agmsg.py list          # anything unread
+python $WAGFLOW/lib/wagmsg.py read <id>     # the id is in the "Chat from WagFlow:" line
+python $WAGFLOW/lib/wagmsg.py list          # anything unread
 ```
 
-To send, write the body to a file under `.workbench/out/` first, then send it by path - a heredoc
+To send, write the body to a file under `.wagflow/out/` first, then send it by path - a heredoc
 makes your sandbox evaluate the whole command as a shell wrapper:
 
 ```bash
-python $AGWORKBENCH/lib/agmsg.py send --to claude --kind answer --subject "re: plan v1" --body-file .workbench/out/plan-v1-review.md
+python $WAGFLOW/lib/wagmsg.py send --to claude --kind answer --subject "re: plan v1" --body-file .wagflow/out/plan-v1-review.md
 ```
 
 - **Never use `--nudge`.** It cannot work from your sandbox, and the relay rings Claude anyway.
-- **After you send, end your turn.** Do not poll or wait: the relay types a `Chat from Workbench:`
+- **After you send, end your turn.** Do not poll or wait: the relay types a `Chat from WagFlow:`
   line into your prompt when mail arrives. That line is a pointer; read the file.
 - Mail from `human` or `github` is the human. It outranks Claude.
-- The issue is in `.workbench/issue.md` (Claude writes it; you cannot fetch it).
+- The issue is in `.wagflow/issue.md` (Claude writes it; you cannot fetch it).
 
 ## Phase 1 - the plan
 
@@ -120,7 +120,7 @@ dirty tree is refused.
 
 A mail with subject `HANDOVER` means the previous implementer (Codex or Claude) hit its usage
 limit, and you now run in its pane with the same mailbox box. Do this before anything else:
-1. Read every message the mail names. `agmsg read <id>` also finds messages the previous
+1. Read every message the mail names. `wagmsg read <id>` also finds messages the previous
    implementer already read.
 2. Run `git status`. Uncommitted changes are the previous implementer's work: review them, and
    finish them, and commit as usual.

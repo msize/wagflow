@@ -5,7 +5,7 @@ run-revmux.ps1 and human-review.ps1 call this as their very last act (in `finall
 that the helper finished and what its pane showed at that moment, so the autonomous close can prove
 the pane has not been touched since (see closer.helper_untouched):
 
-  python lib/helper_done.py --hub <checkout>\\.workbench --kind revmux --round 2 --exit 1
+  python lib/helper_done.py --hub <checkout>\\.wagflow --kind revmux --round 2 --exit 1
 
 The marker is keyed by the helper's own pane id, which is also the session id of a one-pane helper.
 A helper that is killed writes none, and stays open.
@@ -27,21 +27,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agw  # noqa: E402
+import wag  # noqa: E402
 import closer  # noqa: E402
 
 
 def write_marker(hub: str | Path, kind: str, *, round: int | None = None, exit: int | None = None,
                  failures: int | None = None, mail: str | None = None, to: str | None = None) -> Path | None:
-    """Write this pane's completion marker; the caller's very last act. None outside agwinterm.
+    """Write this pane's completion marker; the caller's very last act. None outside wagterm.
     run_helper.py (#45) calls it in-process, after its last line is printed and flushed."""
-    pane = os.environ.get("AGWINTERM_PANE_ID") or os.environ.get("AGWINTERM_SESSION_ID")
+    pane = os.environ.get("WAGTERM_PANE_ID") or os.environ.get("WAGTERM_SESSION_ID")
     if not pane:
-        print("helper_done: not inside an agwinterm pane; no marker written", file=sys.stderr)
+        print("helper_done: not inside a WagTerm pane; no marker written", file=sys.stderr)
         return None
     try:
-        rows = closer.filled_rows(agw.pane_text(pane))
-    except (agw.CtlError, OSError) as err:
+        rows = closer.filled_rows(wag.pane_text(pane))
+    except (wag.CtlError, OSError) as err:
         # Without the rows the pane cannot be proven untouched: the close will leave it open.
         print(f"helper_done: cannot read this pane ({err}); the marker cannot prove it untouched", file=sys.stderr)
         rows = []

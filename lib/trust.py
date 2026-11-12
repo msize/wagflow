@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""trust - record Claude Code's folder trust for one workbench clone.
+"""trust - record Claude Code's folder trust for one wagflow clone.
 
 Claude Code stops on "Do you trust the files in this folder?" the first time it starts in a new
 directory, and `--dangerously-skip-permissions` does not skip it. Its highlighted default is
 "No, exit". The relay will not answer a dialog, so every new issue would stop there - or end, if the
-human hit Enter out of habit. github-workbench records the trust the way Claude does when you choose
+human hit Enter out of habit. wagflow records the trust the way Claude does when you choose
 "Yes, I trust this folder": `projects["<path>"].hasTrustDialogAccepted = true` in ~/.claude.json.
 
 Only for a clone this tool created; the caller passes that path and nothing else.
@@ -47,7 +47,7 @@ def grant_claude(directory: str, config: Path | None = None, attempts: int = 8) 
             return f"already trusted: {key}"
         entry["hasTrustDialogAccepted"] = True
         projects[key] = entry
-        tmp = config.with_name(config.name + f".agworkbench-{os.getpid()}.tmp")
+        tmp = config.with_name(config.name + f".wagflow-{os.getpid()}.tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         now = config.stat().st_mtime_ns if config.exists() else None
         if now != before:

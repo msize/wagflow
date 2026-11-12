@@ -1,7 +1,7 @@
 """The PowerShell side, composed without a terminal: issue parsing and Codex's launch policy.
 
-Every case runs PowerShell in a child process against a temp config (AGWORKBENCH_CONFIG), so the
-suite never reads the user's own ~/.agworkbench.json and never starts an agent.
+Every case runs PowerShell in a child process against a temp config (WAGFLOW_CONFIG), so the
+suite never reads the user's own ~/.wagflow.json and never starts an agent.
 Skipped whole when pwsh is not on PATH.
 """
 
@@ -35,7 +35,7 @@ def ps(script: str, config: dict | None = None, env: dict | None = None) -> subp
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
         json.dump(config, tmp)
         tmp.close()
-        env["AGWORKBENCH_CONFIG"] = tmp.name
+        env["WAGFLOW_CONFIG"] = tmp.name
     try:
         return subprocess.run([PWSH, "-NoProfile", "-Command", script], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", cwd=str(ROOT), env=env)
@@ -45,19 +45,54 @@ def ps(script: str, config: dict | None = None, env: dict | None = None) -> subp
 
 
 def resolve(ref: str, hint: str = "o/r") -> str:
-    result = ps(f". ./lib/Workbench.ps1; $r = Resolve-IssueRef -Ref '{ref}' -RepoHint '{hint}'; "
+    result = ps(f". ./lib/WagFlow.Common.ps1; $r = Resolve-IssueRef -Ref '{ref}' -RepoHint '{hint}'; "
                 f"\"$($r.Repo)#$($r.Number)\"")
     if result.returncode != 0:
         raise AssertionError(result.stderr)
     return result.stdout.strip()
 
 
+class TerminalBranding(unittest.TestCase):
+    def test_powershell_sources_parse(self):
+        result = ps("$files = @(Get-Item ./install.ps1) + @(Get-ChildItem ./lib/*.ps1); "
+                    "foreach ($file in $files) { $tokens = $null; $parseErrors = $null; "
+                    "$null = [System.Management.Automation.Language.Parser]::ParseFile("
+                    "$file.FullName, [ref]$tokens, [ref]$parseErrors); "
+                    "if ($parseErrors) { $parseErrors | Out-String; exit 1 } }")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_missing_wagterm_points_to_its_own_release_without_installing_upstream(self):
+        result = ps(". ./lib/WagFlow.Common.ps1; "
+                    "function Get-WagtermCtl { return $null }; "
+                    "function scoop { throw 'unexpected package installation' }; "
+                    "try { Assert-WagTermInstalled } catch { $_.Exception.Message; exit 3 }")
+        self.assertEqual(3, result.returncode, result.stdout + result.stderr)
+        self.assertIn("https://github.com/msize/wagterm/releases", result.stdout)
+        self.assertIn("WAGTERMCTL", result.stdout)
+        self.assertNotIn("unexpected package installation", result.stdout + result.stderr)
+
+    def test_installed_wagterm_needs_no_installation(self):
+        result = ps(". ./lib/WagFlow.Common.ps1; "
+                    "function Get-WagtermCtl { return 'custom-wagtermctl.exe' }; "
+                    "Assert-WagTermInstalled; 'ready'")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("ready", result.stdout.strip())
+
+    def test_adoption_requires_wagterm_session_variables(self):
+        for enabled, session, expected in [("1", "pane", "True"), ("", "pane", "False"), ("1", "", "False")]:
+            with self.subTest(enabled=enabled, session=session):
+                env = dict(os.environ, WAGTERM_ENABLED=enabled, WAGTERM_SESSION_ID=session)
+                result = ps(". ./lib/WagFlow.Common.ps1; Test-InsideWagterm", env=env)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(expected, result.stdout.strip())
+
+
 class IssueRefs(unittest.TestCase):
     def test_every_accepted_spelling(self):
         cases = {
-            "https://github.com/yeroo/agworkbench/issues/7": "yeroo/agworkbench#7",
-            "https://github.com/yeroo/agworkbench/pull/9": "yeroo/agworkbench#9",
-            "yeroo/agworkbench#7": "yeroo/agworkbench#7",
+            "https://github.com/msize/wagflow/issues/7": "msize/wagflow#7",
+            "https://github.com/msize/wagflow/pull/9": "msize/wagflow#9",
+            "msize/wagflow#7": "msize/wagflow#7",
             "7": "o/r#7",
             "#7": "o/r#7",
         }
@@ -66,11 +101,11 @@ class IssueRefs(unittest.TestCase):
                 self.assertEqual(expected, resolve(ref))
 
     def test_garbage_is_refused_rather_than_guessed(self):
-        result = ps(". ./lib/Workbench.ps1; Resolve-IssueRef -Ref 'not an issue' -RepoHint 'o/r'")
+        result = ps(". ./lib/WagFlow.Common.ps1; Resolve-IssueRef -Ref 'not an issue' -RepoHint 'o/r'")
         self.assertNotEqual(0, result.returncode)
 
     def test_slugs_are_short_lowercase_and_safe_for_a_branch_name(self):
-        result = ps(". ./lib/Workbench.ps1; ConvertTo-Slug 'Fix: the Retry loop -- ignores Backoff!!' 20")
+        result = ps(". ./lib/WagFlow.Common.ps1; ConvertTo-Slug 'Fix: the Retry loop -- ignores Backoff!!' 20")
         slug = result.stdout.strip()
         self.assertRegex(slug, r"^[a-z0-9-]+$")
         self.assertLessEqual(len(slug), 20)
@@ -131,7 +166,7 @@ class ForkCheckouts(unittest.TestCase):
         self.env = dict(os.environ, WB_TEST_SOURCE=str(self.source), WB_TEST_LOG=str(self.log))
 
     def checkout(self, env=None):
-        return ps(". ./lib/Workbench.ps1; " + FORK_GH +
+        return ps(". ./lib/WagFlow.Common.ps1; " + FORK_GH +
                   "$co = New-IssueCheckout -Issue @{ Repo = 'Fork/R'; Number = 5 } -Title 'Fix it' -Root "
                   + ps_quote(self.root / "co") + "; $co.Dir", env=env or self.env)
 
@@ -146,8 +181,8 @@ class ForkCheckouts(unittest.TestCase):
         self.assertEqual(2, len(lines))
         for line in lines:
             self.assertTrue(line.startswith("set-default Fork/R in "), line)
-            self.assertEqual(os.path.normcase(str(self.root / "co" / "R-issue-5")),
-                             os.path.normcase(line.split(" in ", 1)[1]))
+            self.assertEqual((self.root / "co" / "R-issue-5").resolve(),
+                             Path(line.split(" in ", 1)[1]).resolve())
 
     def test_a_default_that_does_not_stick_fails_the_launch(self):
         result = self.checkout(dict(self.env, WB_TEST_VIEW="up/r"))
@@ -159,7 +194,7 @@ class ForkCheckouts(unittest.TestCase):
         git("init", "-q", str(folder))
         git("-C", str(folder), "remote", "add", "origin", "git@github.com:Fork/R.git")
         git("-C", str(folder), "remote", "add", "upstream", "https://github.com/up/r.git")
-        script = (". ./lib/Workbench.ps1; function gh { throw 'gh called' }; Set-Location " + ps_quote(folder) +
+        script = (". ./lib/WagFlow.Common.ps1; function gh { throw 'gh called' }; Set-Location " + ps_quote(folder) +
                   "; $r = Resolve-IssueRef -Ref '7'; \"$($r.Repo)#$($r.Number)\"")
         result = ps(script)
         self.assertEqual(0, result.returncode, result.stderr)
@@ -172,13 +207,13 @@ class ForkCheckouts(unittest.TestCase):
 class PaneIdsOfASession(unittest.TestCase):
     def test_an_unsplit_session_yields_its_whole_id_not_its_first_character(self):
         # Consumers capture the flat pipeline with @(), even for a single pane.
-        result = ps(". ./lib/Workbench.ps1; $s = [pscustomobject]@{ id = '" + MAIN_ID + "' }; "
+        result = ps(". ./lib/WagFlow.Common.ps1; $s = [pscustomobject]@{ id = '" + MAIN_ID + "' }; "
                     "$ids = @(Get-PaneIds $s); $ids.Count; $ids[0]; $ids[0].GetType().Name")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["1", MAIN_ID, "String"], result.stdout.split())
 
     def test_a_split_session_yields_both_panes_in_order(self):
-        result = ps(". ./lib/Workbench.ps1; $s = " + ps_json({"id": MAIN_ID, "paneIds": [MAIN_ID, RIGHT_ID]}) +
+        result = ps(". ./lib/WagFlow.Common.ps1; $s = " + ps_json({"id": MAIN_ID, "paneIds": [MAIN_ID, RIGHT_ID]}) +
                     "; $ids = @(Get-PaneIds $s); $ids.Count; $ids -join ','; $ids[0].GetType().Name")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["2", MAIN_ID + "," + RIGHT_ID, "String"], result.stdout.split())
@@ -186,7 +221,7 @@ class PaneIdsOfASession(unittest.TestCase):
     def test_invalid_pane_lists_are_refused(self):
         for ids in ([], [MAIN_ID, RIGHT_ID, RELAY_ID], [MAIN_ID, MAIN_ID], ["1"], [None]):
             with self.subTest(ids=ids):
-                result = ps("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; Get-PaneIds " +
+                result = ps("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; Get-PaneIds " +
                             ps_json({"id": MAIN_ID, "paneIds": ids}))
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn(MAIN_ID, result.stderr)
@@ -243,7 +278,7 @@ class CodexLaunch(unittest.TestCase):
         self.assertIn("-c model=o3", self.composed({"codexArgs": ["-c", "model=o3"]}))
 
 
-COMPONENTS = ("agworkbench", "agwinterm", "claude", "codex", "kimi", "revmux", "revdiff", "gh")
+COMPONENTS = ("wagflow", "wagterm", "claude", "codex", "kimi", "revmux", "revdiff", "gh")
 MODULE_VERSION = "v0.0.0-20260820161812-4b87635251dc"
 WINDOWS_PS = shutil.which("powershell.exe")
 
@@ -263,9 +298,9 @@ class VersionFixtures(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep +
                         str(Path(os.environ["SystemRoot"]) / "System32"),
                         LOCALAPPDATA=str(self.tools),
-                        AGWINTERMCTL=str(self.tools / "agwintermctl.cmd"))
+                        WAGTERMCTL=str(self.tools / "wagtermctl.cmd"))
         self.stub("git", ["0408866-dirty"])
-        self.stub("agwintermctl", [r"cli 0.20.9 C:\tools\agwintermctl.exe", "app unavailable"],
+        self.stub("wagtermctl", [r"cli 0.20.9 C:\tools\wagtermctl.exe", "app unavailable"],
                   arguments="version")
         self.stub("claude", ["2.1.278 (Claude Code)"], arguments="--version")
         self.stub("codex", ["codex-cli 0.154.0"], arguments="--version")
@@ -303,17 +338,17 @@ class VersionFixtures(unittest.TestCase):
             self.assertTrue(line.startswith(f"{name:<12} "), line)
             values[name] = line[13:]
             self.assertTrue(values[name], line)
-        self.assertTrue(values["agworkbench"].endswith(f" ({ROOT})"))
+        self.assertTrue(values["wagflow"].endswith(f" ({ROOT})"))
         return values
 
     def probe_report(self, setup=""):
-        return self.report(ps("$ErrorActionPreference = 'Stop'; . ./lib/Workbench.ps1; " + setup +
+        return self.report(ps("$ErrorActionPreference = 'Stop'; . ./lib/WagFlow.Common.ps1; " + setup +
                               "Get-ToolchainVersions | ForEach-Object { "
                               "'{0,-12} {1}' -f $_.Name, $_.Version }", env=self.env))
 
     def run_script(self, args=("-Version",), shell=PWSH):
         return subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                               str(LIB / "github-workbench.ps1"), *args], env=self.env,
+                               str(LIB / "wagflow.ps1"), *args], env=self.env,
                               cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
@@ -321,10 +356,10 @@ class VersionProbe(VersionFixtures):
     def test_token_extraction(self):
         cases = [("gh version 2.94.0 (2026-06-10)", "2.94.0"),
                  ("codex-cli 0.154.0", "0.154.0"), ("2.1.278 (Claude Code)", "2.1.278"),
-                 (r"cli 0.20.9 C:\x\agwintermctl.exe", "0.20.9"),
+                 (r"cli 0.20.9 C:\x\wagtermctl.exe", "0.20.9"),
                  ("revmux unknown", None), ("", None), ("tool 2.1", "2.1")]
         literals = ", ".join(ps_quote(line) for line, _ in cases)
-        result = ps(". ./lib/Workbench.ps1; @( " + literals + " ) | ForEach-Object { "
+        result = ps(". ./lib/WagFlow.Common.ps1; @( " + literals + " ) | ForEach-Object { "
                     "ConvertTo-Json -Compress -InputObject (Get-VersionToken $_) }", env=self.env)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual([expected for _, expected in cases],
@@ -343,7 +378,7 @@ class VersionProbe(VersionFixtures):
                                               encoding="utf-8")
         self.env["PATH"] += os.pathsep + str(later)
         values = self.probe_report()
-        self.assertEqual(f"0408866-dirty ({ROOT})", values["agworkbench"])
+        self.assertEqual(f"0408866-dirty ({ROOT})", values["wagflow"])
         self.assertEqual("0.154.0", values["codex"])
         self.assertEqual(MODULE_VERSION, values["revmux"])
 
@@ -354,7 +389,7 @@ class VersionProbe(VersionFixtures):
     def test_powershell_probe_does_not_inherit_a_previous_exit_code(self):
         pure = self.tools / "pure.ps1"
         pure.write_text("'pure 1.2.3'\n", encoding="utf-8")
-        result = ps(". ./lib/Workbench.ps1; & $env:COMSPEC /d /c 'exit 5'; "
+        result = ps(". ./lib/WagFlow.Common.ps1; & $env:COMSPEC /d /c 'exit 5'; "
                     "Get-ToolVersion " + ps_quote(pure) + " @()", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual("1.2.3", result.stdout.strip())
@@ -365,18 +400,18 @@ class VersionProbe(VersionFixtures):
                              ("go", f"mod example.invalid/tool {MODULE_VERSION}")):
             (self.tools / f"{name}.cmd").unlink()
             (self.tools / f"{name}.ps1").write_text(ps_quote(output) + "\n", encoding="utf-8")
-        result = ps(". ./lib/Workbench.ps1; & $env:COMSPEC /d /c 'exit 5'; "
+        result = ps(". ./lib/WagFlow.Common.ps1; & $env:COMSPEC /d /c 'exit 5'; "
                     "Get-GoModuleVersion 'unused.exe'", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual(MODULE_VERSION, result.stdout.strip())
         values = self.probe_report("& $env:COMSPEC /d /c 'exit 5'; ")
-        self.assertEqual(f"0408866-dirty ({ROOT})", values["agworkbench"])
+        self.assertEqual(f"0408866-dirty ({ROOT})", values["wagflow"])
 
     def test_everything_missing(self):
         self.env["PATH"] = str(self.tools / "empty")
         # Find-KimiExe's last resort is the real ~/.kimi-code/bin/kimi.exe, which a test never reads.
-        values = self.probe_report("function Get-AgwintermCtl { return $null }; function Find-KimiExe($Config) { return $null }; ")
-        self.assertEqual(f"unversioned ({ROOT})", values.pop("agworkbench"))
+        values = self.probe_report("function Get-WagtermCtl { return $null }; function Find-KimiExe($Config) { return $null }; ")
+        self.assertEqual(f"unversioned ({ROOT})", values.pop("wagflow"))
         self.assertEqual({"missing"}, set(values.values()))
 
     def test_go_fallback_keeps_the_raw_line_without_metadata(self):
@@ -397,14 +432,14 @@ class VersionProbe(VersionFixtures):
         self.stub("revdiff", code=9)
         self.stub("git", ["fatal: no checkout"], code=128, stderr=True)
         values = self.probe_report()
-        self.assertEqual(f"unversioned ({ROOT})", values["agworkbench"])
+        self.assertEqual(f"unversioned ({ROOT})", values["wagflow"])
         self.assertEqual("2.1.278", values["claude"])
         self.assertEqual("error: no output", values["codex"])
         self.assertEqual("error (exit 7): error: gh 2.0.0 is broken", values["gh"])
         self.assertEqual("error (exit 9)", values["revdiff"])
 
     def test_unstartable_tool_is_an_error(self):
-        result = ps("$ErrorActionPreference = 'Stop'; . ./lib/Workbench.ps1; "
+        result = ps("$ErrorActionPreference = 'Stop'; . ./lib/WagFlow.Common.ps1; "
                     "Get-ToolVersion " + ps_quote(self.tools / "absent.exe") + " @('--version')",
                     env=self.env)
         self.assertEqual(0, result.returncode, result.stderr)
@@ -413,8 +448,8 @@ class VersionProbe(VersionFixtures):
         self.assertTrue(result.stdout.startswith("error: "), result.stdout)
 
     def test_lookup_exception_is_isolated(self):
-        values = self.probe_report("function Get-AgwintermCtl { throw \"broken lookup`nsecond line\" }; ")
-        self.assertEqual("error: broken lookup", values["agwinterm"])
+        values = self.probe_report("function Get-WagtermCtl { throw \"broken lookup`nsecond line\" }; ")
+        self.assertEqual("error: broken lookup", values["wagterm"])
         self.assertEqual("2.94.0", values["gh"])
 
 
@@ -427,8 +462,8 @@ class VersionReport(VersionFixtures):
         self.assertEqual("error (exit 7): broken install", values["gh"])
 
     def test_version_with_anything_else_is_refused_before_anything_runs(self):
-        markers = [self.tools / (name + ".called") for name in ("gh", "agwintermctl", "git")]
-        for name, marker in zip(("gh", "agwintermctl", "git"), markers):
+        markers = [self.tools / (name + ".called") for name in ("gh", "wagtermctl", "git")]
+        for name, marker in zip(("gh", "wagtermctl", "git"), markers):
             self.stub(name, marker=marker)
         for extra, parameter in [(["42"], "Issue"), (["-Repo", "o/r"], "Repo"),
                                  (["-DryRun"], "DryRun"), (["-Yes"], "Yes"), (["-NoRelay"], "NoRelay")]:
@@ -441,13 +476,13 @@ class VersionReport(VersionFixtures):
                 self.assertFalse(any(marker.exists() for marker in markers))
 
     def test_pwsh_smoke(self):
-        self.assertEqual("0.20.9", self.report(self.run_script())["agwinterm"])
+        self.assertEqual("0.20.9", self.report(self.run_script())["wagterm"])
 
     @unittest.skipUnless(WINDOWS_PS, "Windows PowerShell not installed")
     def test_windows_powershell_smoke(self):
         self.stub("gh", ["error: gh 2.0.0 is broken"], code=7, stderr=True)
         values = self.report(self.run_script(shell=WINDOWS_PS))
-        self.assertEqual("0.20.9", values["agwinterm"])
+        self.assertEqual("0.20.9", values["wagterm"])
         self.assertEqual(MODULE_VERSION, values["revmux"])
         self.assertEqual("error (exit 7): error: gh 2.0.0 is broken", values["gh"])
 
@@ -460,10 +495,10 @@ class VersionReport(VersionFixtures):
                 else:
                     self.env.pop("NoDefaultCurrentDirectoryInExePath", None)
                 result = subprocess.run([os.environ["COMSPEC"], "/d", "/c",
-                                         str(ROOT / "github-workbench.cmd"), "-Version"],
+                                         str(ROOT / "wagflow.cmd"), "-Version"],
                                         env=self.env, cwd=ROOT, capture_output=True, text=True,
                                         encoding="utf-8", errors="replace")
-                self.assertEqual("0.20.9", self.report(result)["agwinterm"])
+                self.assertEqual("0.20.9", self.report(result)["wagterm"])
 
 
 MAIN_ID = "11111111-1111-4111-8111-111111111111"
@@ -487,8 +522,8 @@ class ShellReady(unittest.TestCase):
                   ("\u203a Ask Codex to do anything\ngpt-test", False),
                   ("esc to interrupt\nPS C:\\x>", False),
                   ("Do you trust this directory? [y/N]", False),
-                  ("PS C:\\x> Chat from Workbench:", False)]
-        script = ". ./lib/Workbench.ps1; " + "; ".join(
+                  ("PS C:\\x> Chat from WagFlow:", False)]
+        script = ". ./lib/WagFlow.Common.ps1; " + "; ".join(
             "ConvertTo-Json (Test-ShellReady " + ps_quote(frame) + ")" for frame, _ in frames)
         result = ps(script)
         self.assertEqual(0, result.returncode, result.stderr)
@@ -506,22 +541,22 @@ class LauncherFixtures(unittest.TestCase):
         self.checkout.mkdir()
         self.scenario_path = self.temp / "scenario.json"
         self.calls_path = self.temp / "calls.jsonl"
-        self.log_path = self.checkout / ".workbench/state/launch.log"
-        self.stop_path = self.checkout / ".workbench/state/relay.stop"
-        self.registry_path = self.checkout / ".workbench/state/agents.json"
+        self.log_path = self.checkout / ".wagflow/state/launch.log"
+        self.stop_path = self.checkout / ".wagflow/state/relay.stop"
+        self.registry_path = self.checkout / ".wagflow/state/agents.json"
         self.config_path = self.temp / "config.json"
         self.config_path.write_text(json.dumps({"checkoutRoot": str(self.temp)}), encoding="utf-8")
         self.env = dict(os.environ, PATH=str(self.temp) + os.pathsep +
                         str(Path(os.environ["SystemRoot"]) / "System32"),
-                        AGWINTERMCTL=str(self.temp / "agwintermctl.ps1"),
+                        WAGTERMCTL=str(self.temp / "wagtermctl.ps1"),
                         STUB_CTL_SCENARIO=str(self.scenario_path), STUB_CTL_CALLS=str(self.calls_path),
-                        AGWORKBENCH_CONFIG=str(self.config_path), PYTHONIOENCODING="utf-8",
+                        WAGFLOW_CONFIG=str(self.config_path), PYTHONIOENCODING="utf-8",
                         CLAUDE_CONFIG_DIR=str(self.temp / 'claude-home'), CODEX_HOME=str(self.temp / 'codex-home'),
-                        AI_HUB=str(self.checkout / ".workbench"), AGWINTERM_ENABLED="1",
-                        AGWINTERM_SESSION_ID=OTHER_ID)
+                        AI_HUB=str(self.checkout / ".wagflow"), WAGTERM_ENABLED="1",
+                        WAGTERM_SESSION_ID=OTHER_ID)
         # cmd.exe truncates session-type arguments at the embedded submit newline.
         # Forward through PowerShell to preserve the argv the real native ctl receives.
-        (self.temp / "agwintermctl.ps1").write_text(
+        (self.temp / "wagtermctl.ps1").write_text(
             "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CtlArgs)\n& " +
             ps_quote(sys.executable) + " " + ps_quote(ROOT / "tests/stub_ctl.py") +
             " @CtlArgs\nexit $LASTEXITCODE\n", encoding="utf-8")
@@ -545,7 +580,7 @@ class LauncherFixtures(unittest.TestCase):
         return self.log_path.read_text(encoding="utf-8-sig")
 
     def setup_ps(self):
-        return ("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; "
+        return ("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; "
                 "$script:Launch = @{Stage='config'; IssueRef='o/repo#7'; Checkout=" +
                 ps_quote(self.checkout) + "}; Enable-LaunchLog; ")
 
@@ -561,7 +596,7 @@ class LauncherFixtures(unittest.TestCase):
                   ps_quote(self.checkout) + "; Issue='o/repo#7'}; $builder = { param($Hub,$Left,$Right) "
                   "'python ' + (Quote 'relay.py') + ' --hub ' + (Quote $Hub) + "
                   "' --claude-pane ' + (Quote $Left) + ' --codex-pane ' + (Quote $Right) }; "
-                  "$ok = Invoke-LaunchSafely { Start-WorkbenchSession -Checkout " + ps_quote(self.checkout) +
+                  "$ok = Invoke-LaunchSafely { Start-WagFlowSession -Checkout " + ps_quote(self.checkout) +
                   " -Number 7 -Slug 'fix-x' -RepoName 'repo' -ClaudeLaunch $claudeLine "
                   "-CodexLaunch $codexLine -CodexRestore $codexRestore -RelayCommand $builder " + ("-NoRelay " if no_relay else "") +
                   ("-ImplementerTool " + implementer + " " if implementer else "") +
@@ -582,7 +617,7 @@ class LauncherFixtures(unittest.TestCase):
         self.save_scenario()
 
     def register(self, claude=MAIN_ID, codex=RIGHT_ID):
-        result = ps(". ./lib/Workbench.ps1; Initialize-Mailbox -Checkout " + ps_quote(self.checkout) +
+        result = ps(". ./lib/WagFlow.Common.ps1; Initialize-Mailbox -Checkout " + ps_quote(self.checkout) +
                     " -ClaudePane " + ps_quote(claude) + " -CodexPane " + ps_quote(codex), env=self.env)
         self.assertEqual(0, result.returncode, result.stderr)
         return json.loads(self.registry_path.read_text(encoding="utf-8"))
@@ -613,12 +648,12 @@ class IssueSessions(LauncherFixtures):
         stale["agents"]["claude"]["pane"] = OTHER_ID
         cases.append((tree, stale, "fix-x", MAIN_ID))
         for snapshot, reg, slug, expected in cases:
-            result = ps(". ./lib/Workbench.ps1; $s = Find-IssueSession " + ps_json(snapshot) +
+            result = ps(". ./lib/WagFlow.Common.ps1; $s = Find-IssueSession " + ps_json(snapshot) +
                         " 'repo' 7 " + ps_quote(slug) + " " + ps_json(reg) +
                         "; ConvertTo-Json -InputObject $s.id", env=self.env)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(expected, json.loads(result.stdout))
-        result = ps("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; Find-IssueSession " +
+        result = ps("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; Find-IssueSession " +
                     ps_json(duplicate) + " 'repo' 7 'fix-x' $null", env=self.env)
         self.assertNotEqual(0, result.returncode)
         self.assertIn(MAIN_ID, result.stderr)
@@ -628,7 +663,7 @@ class IssueSessions(LauncherFixtures):
         registry = self.register()
         for name in ("#3 old", "#7 relay", "#7 revmux r1", "#7 your review"):
             tree = {"workspaces": [{"name": "repo", "sessions": [{"id": MAIN_ID, "name": name}]}]}
-            result = ps(". ./lib/Workbench.ps1; $s=Find-IssueSession " + ps_json(tree) +
+            result = ps(". ./lib/WagFlow.Common.ps1; $s=Find-IssueSession " + ps_json(tree) +
                         " 'repo' 7 'fix-x' " + ps_json(registry) + "; ConvertTo-Json -InputObject $s", env=self.env)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIsNone(json.loads(result.stdout))
@@ -636,10 +671,10 @@ class IssueSessions(LauncherFixtures):
     def test_relay_scope_and_ambiguity(self):
         tree = {"workspaces": [{"name": "other-repo", "sessions": [{"id": OTHER_ID, "name": "#7 relay"}]},
                                {"name": "repo", "sessions": [{"id": RELAY_ID, "name": "#7 relay"}]}]}
-        result = ps(". ./lib/Workbench.ps1; (Find-RelaySession " + ps_json(tree) + " 'repo' 7).id", env=self.env)
+        result = ps(". ./lib/WagFlow.Common.ps1; (Find-RelaySession " + ps_json(tree) + " 'repo' 7).id", env=self.env)
         self.assertEqual(RELAY_ID, result.stdout.strip())
         tree["workspaces"][1]["sessions"].append({"id": MAIN_ID, "name": "#7 relay"})
-        result = ps("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; Find-RelaySession " +
+        result = ps("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; Find-RelaySession " +
                     ps_json(tree) + " 'repo' 7", env=self.env)
         self.assertNotEqual(0, result.returncode)
         self.assertIn(RELAY_ID, result.stderr)
@@ -657,7 +692,7 @@ class IssueSessions(LauncherFixtures):
                                       (two, claude_known, (MAIN_ID, RIGHT_ID, False, "primary", "Codex")),
                                       (two, codex_known, (RIGHT_ID, MAIN_ID, False, "split", "Codex")),
                                       (two, neither_known, (MAIN_ID, RIGHT_ID, False, "primary", "Codex"))]:
-            result = ps(". ./lib/Workbench.ps1; Get-PanePlan " + ps_json(session) + " " + ps_json(reg) +
+            result = ps(". ./lib/WagFlow.Common.ps1; Get-PanePlan " + ps_json(session) + " " + ps_json(reg) +
                         " | ConvertTo-Json -Compress", env=self.env)
             self.assertEqual(0, result.returncode, result.stderr)
             plan = json.loads(result.stdout)
@@ -666,7 +701,7 @@ class IssueSessions(LauncherFixtures):
 
 class LaunchLog(LauncherFixtures):
     def test_buffer_flush_multiline_append_and_disable(self):
-        result = ps(". ./lib/Workbench.ps1; Write-LaunchLog off 'ignored'; Enable-LaunchLog; "
+        result = ps(". ./lib/WagFlow.Common.ps1; Write-LaunchLog off 'ignored'; Enable-LaunchLog; "
                     "Write-LaunchLog config 'first'; Write-LaunchLog error \"one`ntwo\"; "
                     "Connect-LaunchLog " + ps_quote(self.log_path) + "; Write-LaunchLog done 'last'; "
                     "Disable-LaunchLog; Write-LaunchLog off 'ignored'; Connect-LaunchLog " +
@@ -688,7 +723,7 @@ class LaunchLog(LauncherFixtures):
         self.assertEqual(1, result.stdout.count("Cannot write launch log"))
         self.assertIn("original failure", result.stdout)
         self.assertIn("config buffered", result.stdout)
-        self.assertIn("github-workbench 'o/repo#7'", result.stdout)
+        self.assertIn("wagflow 'o/repo#7'", result.stdout)
 
 
 class LauncherFlow(LauncherFixtures):
@@ -765,7 +800,7 @@ class LauncherFlow(LauncherFixtures):
         result = self.flow()
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         typed = [c for c in self.calls() if c[:2] == ["session", "type"]]
-        relay = ("python 'relay.py' --hub " + ps_quote(self.checkout / ".workbench") +
+        relay = ("python 'relay.py' --hub " + ps_quote(self.checkout / ".wagflow") +
                  " --claude-pane '" + MAIN_ID + "' --codex-pane '" + RIGHT_ID + "'")
         self.assertEqual([["session", "type", "--select", relay + "\n", "--target", RELAY_ID]], typed)
         self.assertFalse(any(c[:2] == ["session", "new"] for c in self.calls()))
@@ -819,7 +854,7 @@ class LauncherFlow(LauncherFixtures):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("not at a proven shell prompt; start Claude", result.stdout)
         self.assertIn("ready: Claude (right) still needs starting by hand:", result.stdout)
-        self.assertNotIn("is running /start-github-issue", result.stdout)
+        self.assertNotIn("is running /wagflow-start", result.stdout)
         launch = json.loads(result.stdout.splitlines()[-1])
         self.assertIn(launch["ClaudeLaunch"], result.stdout)
         self.assertIn(OTHER_ID + " not-proven timeout last-row= waited=90s", self.log())
@@ -915,9 +950,9 @@ class LauncherFlow(LauncherFixtures):
         self.save_scenario()
         result = self.flow()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
-        for text in ("ctl session split", "ctl exit 1: split exploded", "error ", "Start-WorkbenchSession", "Invoke-LaunchSafely"):
+        for text in ("ctl session split", "ctl exit 1: split exploded", "error ", "Start-WagFlowSession", "Invoke-LaunchSafely"):
             self.assertIn(text, self.log())
-        for text in (MAIN_ID, "github-workbench 'o/repo#7'", "incomplete"):
+        for text in (MAIN_ID, "wagflow 'o/repo#7'", "incomplete"):
             self.assertIn(text, result.stdout)
         self.assertNotIn("pane-codex.ps1", result.stdout)
         self.assertNotIn("--codex-pane", result.stdout)
@@ -961,7 +996,7 @@ class RestartPanes(LauncherFixtures):
         rollout = self.rollout('23', MAIN_ID, '2026-09-23T00:00:00Z')
         for shell in [PWSH] + ([WINDOWS_PS] if WINDOWS_PS else []):
             with self.subTest(shell=shell):
-                command = ("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; "
+                command = ("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; "
                            '$paths=@(' + ps_quote(transcript) + ',' + ps_quote(rollout) + '); '
                            "$writers=@($paths | ForEach-Object { [IO.File]::Open($_,'Open','ReadWrite','ReadWrite') }); "
                            'try { $claude=Get-ClaudeTranscript ' + ps_quote(OTHER_ID) + '; '
@@ -982,12 +1017,12 @@ class RestartPanes(LauncherFixtures):
             path.parent.mkdir(parents=True)
             path.write_text(content, encoding='utf-8')
             paths.append(path)
-        result = ps('. ./lib/Workbench.ps1; Get-ClaudeTranscript ' + ps_quote(OTHER_ID) +
+        result = ps('. ./lib/WagFlow.Common.ps1; Get-ClaudeTranscript ' + ps_quote(OTHER_ID) +
                     ' | ConvertTo-Json -Compress', env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual(str(self.checkout), json.loads(result.stdout)['Cwd'])
         paths[0].write_text(json.dumps({'cwd': str(self.temp)}), encoding='utf-8')
-        command = ("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; try { Get-ClaudeTranscript " +
+        command = ("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; try { Get-ClaudeTranscript " +
                    ps_quote(OTHER_ID) + " } catch { $_.Exception.Message }; " +
                    '@(' + ','.join(ps_quote(p) for p in paths) + ') | ForEach-Object { '
                    "$writer=[IO.File]::Open($_,'Open','ReadWrite','None'); $writer.Dispose() }")
@@ -1001,7 +1036,7 @@ class RestartPanes(LauncherFixtures):
         record = dict(pane=MAIN_ID, sessionId=OTHER_ID, cwd=str(self.checkout), origin='fresh',
                       reservedAt='2026-09-23T00:00:00Z', issue='o/repo#7', checkout=str(self.checkout))
         record.update(changes)
-        path = self.checkout / '.workbench/state/claude.json'
+        path = self.checkout / '.wagflow/state/claude.json'
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding='utf-8')
         return path
@@ -1041,21 +1076,21 @@ class RestartPanes(LauncherFixtures):
         resumed = self.pane('claude')
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
         self.assertIn("'--resume' '" + OTHER_ID + "'", resumed.stdout)
-        self.assertNotIn('/start-github-issue', resumed.stdout)
+        self.assertNotIn('/wagflow-start', resumed.stdout)
         self.assertEqual(before, path.read_bytes())
         self.assertFalse(self.registry_path.exists())
 
     def test_claude_missing_or_malformed_identity_fails_with_repair(self):
         missing = self.pane('claude')
         self.assertEqual(1, missing.returncode)
-        self.assertIn("Repair: github-workbench 'o/repo#7'", missing.stdout)
+        self.assertIn("Repair: wagflow 'o/repo#7'", missing.stdout)
         path = self.identity()
         path.write_text('{broken', encoding='utf-8')
         malformed = self.pane('claude')
         self.assertEqual(1, malformed.returncode)
         self.assertNotIn('would run:', malformed.stdout)
 
-    def test_actual_pane_invocations_preserve_resume_argv_and_workbench_context(self):
+    def test_actual_pane_invocations_preserve_resume_argv_and_wagflow_context(self):
         original = self.temp / "it's the original cwd"
         original.mkdir()
         self.identity(cwd=str(original), origin='adopted')
@@ -1066,21 +1101,21 @@ class RestartPanes(LauncherFixtures):
             with self.subTest(role=role):
                 command = ('function ' + role + ' { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$AgentArgs); '
                            '[pscustomobject]@{Args=$AgentArgs; Cwd=(Get-Location).Path; Hub=$env:AI_HUB; '
-                           'Box=$env:AI_BOX; Root=$env:AGWORKBENCH} | ConvertTo-Json -Compress }; '
+                           'Box=$env:AI_BOX; Root=$env:WAGFLOW} | ConvertTo-Json -Compress }; '
                            '& ./lib/pane-' + role + '.ps1 -Checkout ' + ps_quote(self.checkout) + " -Issue 'o/repo#7'" +
                            (' -Resume' if role == 'codex' else ''))
                 result = ps(command, env=self.env)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 capture = json.loads(result.stdout.splitlines()[-1])
-                self.assertEqual(str(self.checkout / '.workbench'), capture['Hub'])
+                self.assertEqual(str(self.checkout / '.wagflow'), capture['Hub'])
                 self.assertEqual(role, capture['Box'])
                 self.assertEqual(str(ROOT), capture['Root'])
                 if role == 'claude':
                     self.assertEqual(str(original), capture['Cwd'])
-                    settings = str(self.checkout / '.workbench/state/claude-settings.json')
+                    settings = str(self.checkout / '.wagflow/state/claude-settings.json')
                     self.assertEqual(['--settings', settings, '--resume', OTHER_ID], capture['Args'][:4])   # #33
                     self.assertEqual(5, len(capture['Args']))
-                    self.assertIn('resumed after an agwinterm restart', capture['Args'][4])
+                    self.assertIn('resumed after a WagTerm restart', capture['Args'][4])
                     self.assertIn('one background wb.py wait-mail waiter', capture['Args'][4])
                     self.assertIn('continue the phase you were in', capture['Args'][4])
                 else:
@@ -1089,7 +1124,7 @@ class RestartPanes(LauncherFixtures):
                     self.assertEqual(MAIN_ID, args[args.index('resume') + 1])
                     self.assertEqual('workspace-write', args[args.index('--sandbox') + 1])
                     self.assertEqual('never', args[args.index('--ask-for-approval') + 1])
-                    self.assertIn('resumed after an agwinterm restart', args[-1])
+                    self.assertIn('resumed after a WagTerm restart', args[-1])
                     self.assertIn('implementing or fixing, continue that step and report', args[-1])
                     self.assertIn('Otherwise run python', args[-1])
                     self.assertNotIn('Do not edit anything now', args[-1])
@@ -1133,8 +1168,8 @@ class RestartPanes(LauncherFixtures):
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertIn('resume ' + MAIN_ID, result.stdout)
                 self.assertIn('--sandbox workspace-write --ask-for-approval never', result.stdout)
-                self.assertIn('resumed after an agwinterm restart', result.stdout)
-                self.assertIn('agmsg.py" list', result.stdout)
+                self.assertIn('resumed after a WagTerm restart', result.stdout)
+                self.assertIn('wagmsg.py" list', result.stdout)
                 self.assertNotIn('resume ' + OTHER_ID, result.stdout)
 
     def test_codex_missing_session_falls_back_to_fresh_prompt(self):
@@ -1161,7 +1196,7 @@ class RestartPanes(LauncherFixtures):
         for shell in [PWSH] + ([WINDOWS_PS] if WINDOWS_PS else []):
             with self.subTest(shell=shell):
                 env = dict(self.env, PATH=str(Path(shell).parent) + os.pathsep + self.env['PATH'])
-                command = ('. ./lib/Workbench.ps1; $real = ${function:Get-PaneLaunchArgs}; '
+                command = ('. ./lib/WagFlow.Common.ps1; $real = ${function:Get-PaneLaunchArgs}; '
                            'function Get-PaneLaunchArgs($Script,$Arguments,$Switches) { '
                            '$l = & $real $Script $Arguments -Switches $Switches; '
                            "$l.Prefix = @('-NoProfile') + $l.Prefix; $l.Exe = " + ps_quote(Path(shell).name) + '; $l }; '
@@ -1201,7 +1236,7 @@ class RestoreFlow(LauncherFixtures):
         self.assertIn(MAIN_ID, self.pins())
         self.assertFalse(any(c[:2] == ['session', 'type'] and c[-1] == MAIN_ID for c in self.calls()))
         # Recovery also disposes its reader before returning to the same process.
-        check = ps("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; $null=Find-LegacyClaudeIdentity " +
+        check = ps("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; $null=Find-LegacyClaudeIdentity " +
                    ps_quote(self.checkout) + '; $stream=[IO.File]::Open(' + ps_quote(selected) +
                    ",'Open','ReadWrite','None'); $stream.Dispose()", env=self.env)
         self.assertEqual(0, check.returncode, check.stdout + check.stderr)
@@ -1212,10 +1247,10 @@ class RestoreFlow(LauncherFixtures):
         self.save_scenario()
         result = self.flow(no_relay=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertFalse((self.checkout / '.workbench/state/claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/claude.json').exists())
         self.assertEqual({RIGHT_ID}, set(self.pins()))
         self.assertIn('leaving it unpinned', result.stdout)
-        self.assertIn("github-workbench 'o/repo#7'", result.stdout)
+        self.assertIn("wagflow 'o/repo#7'", result.stdout)
         self.assertNotIn('start Claude there yourself', result.stdout)
         self.assertFalse(any(c[:2] == ['session', 'type'] and c[-1] == MAIN_ID for c in self.calls()))
 
@@ -1227,7 +1262,7 @@ class RestoreFlow(LauncherFixtures):
         self.legacy_transcript(OTHER_ID, 2000)
         result = self.flow(no_relay=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertFalse((self.checkout / '.workbench/state/claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/claude.json').exists())
         self.assertNotIn(MAIN_ID, self.pins())
 
     def test_existing_codex_shell_uses_resume_but_new_split_uses_fresh(self):
@@ -1270,7 +1305,7 @@ class RestoreFlow(LauncherFixtures):
             blocked = self.flow(no_relay=True)
             self.assertEqual(1, blocked.returncode, blocked.stdout + blocked.stderr)
             self.assertIn('Cannot acquire checkout launch lock', blocked.stdout)
-            self.assertFalse((self.checkout / '.workbench/state/claude.json').exists())
+            self.assertFalse((self.checkout / '.wagflow/state/claude.json').exists())
             self.assertEqual([], self.calls())
         finally:
             release.touch()
@@ -1280,10 +1315,10 @@ class RestoreFlow(LauncherFixtures):
         retry = self.flow(no_relay=True)
         self.assertEqual(0, retry.returncode, retry.stdout + retry.stderr)
         self.assertEqual(MAIN_ID, self.record()['pane'])
-        self.assertEqual([], list((self.checkout / '.workbench/state').glob('*.tmp')))
+        self.assertEqual([], list((self.checkout / '.wagflow/state').glob('*.tmp')))
 
     def record(self):
-        return json.loads((self.checkout / '.workbench/state/claude.json').read_text(encoding='utf-8-sig'))
+        return json.loads((self.checkout / '.wagflow/state/claude.json').read_text(encoding='utf-8-sig'))
 
     def pins(self):
         return {c[-1]: c[2] for c in self.calls() if c[:2] == ['session', 'restore']}
@@ -1346,14 +1381,14 @@ class RestoreFlow(LauncherFixtures):
         self.save_scenario()
         result = self.flow()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
-        self.assertIn('Repair restart configuration: agwintermctl session restore', result.stdout)
+        self.assertIn('Repair restart configuration: wagtermctl session restore', result.stdout)
         self.assertIn("--target '" + MAIN_ID + "'", result.stdout)
         self.assertEqual(MAIN_ID, self.record()['pane'])
         self.assertFalse(any(c[:2] == ['session', 'split'] for c in self.calls()))
 
     def test_replacement_claude_archives_identity_and_gets_a_new_one(self):
         self.surviving_codex()
-        path = self.checkout / '.workbench/state/claude.json'
+        path = self.checkout / '.wagflow/state/claude.json'
         path.write_text(json.dumps(dict(pane=MAIN_ID, sessionId=RELAY_ID, cwd=str(self.checkout), origin='fresh',
                                         reservedAt='2026-09-23', issue='o/repo#7', checkout=str(self.checkout))), encoding='utf-8')
         result = self.flow(no_relay=True)
@@ -1414,7 +1449,7 @@ class QueueEntry(LauncherFixtures):
                               parallel=1, watch=False, yes=False, label=None, owner=None, members=[member]))
         self.entry_lib = self.temp / 'queue entry'
         self.entry_lib.mkdir()
-        for name in ['github-workbench.ps1', 'conductor.py', 'agw.py', 'hub.py', 'closer.py', 'limits.py', 'triage.py',
+        for name in ['wagflow.ps1', 'conductor.py', 'wag.py', 'hub.py', 'closer.py', 'limits.py', 'triage.py',
                      'labelquery.py', 'tslog.py']:
             shutil.copyfile(LIB / name, self.entry_lib / name)
         self.overrides = (
@@ -1424,17 +1459,17 @@ class QueueEntry(LauncherFixtures):
             "Connect-LaunchLog " + ps_quote(self.log_path) + "; return @{Dir=$Directory;Branch='issue-7-fix-x'} }\n"
             "function Grant-CodexTrust {}\nfunction Grant-ClaudeTrust {}\n"
             "$script:WindowTiming = @{ Poll = 0.05; Wait = 0.3 }\n"
-            "function Test-AgwintermMinimized { return $false }\n"
-            "function Restore-AgwintermWindow {}\n")
+            "function Test-WagtermMinimized { return $false }\n"
+            "function Restore-WagtermWindow {}\n")
         self.write_helpers()
 
     def write_helpers(self, extra=''):
-        (self.entry_lib / 'Workbench.ps1').write_text((LIB / 'Workbench.ps1').read_text(encoding='utf-8-sig') +
+        (self.entry_lib / 'WagFlow.Common.ps1').write_text((LIB / 'WagFlow.Common.ps1').read_text(encoding='utf-8-sig') +
                                                     self.overrides + extra, encoding='utf-8')
 
     def entry(self, *extra, shell=PWSH):
         return subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                               str(self.entry_lib / 'github-workbench.ps1'), 'o/repo#7',
+                               str(self.entry_lib / 'wagflow.ps1'), 'o/repo#7',
                                '-QueueMember', str(self.queue_path), '-QueueAttempt', '1', '-QueueToken', self.token, *extra],
                               env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=45)
 
@@ -1449,10 +1484,10 @@ class QueueEntry(LauncherFixtures):
         dump.unlink(missing_ok=True)
         (self.temp / 'dump_start.py').write_text(
             'import json, os, sys\n'
-            f'json.dump({{"args": sys.argv[1:], "spec": os.environ.get("AGWORKBENCH_QUEUE_SPEC")}}, '
+            f'json.dump({{"args": sys.argv[1:], "spec": os.environ.get("WAGFLOW_QUEUE_SPEC")}}, '
             f'open(r"{dump}", "w", encoding="utf-8"))\n', encoding='utf-8')
         self.cmd('python', f'"{sys.executable}" "{self.temp / "dump_start.py"}" %*')
-        result = subprocess.run([shell, '-NoProfile', '-File', str(self.entry_lib / 'github-workbench.ps1'),
+        result = subprocess.run([shell, '-NoProfile', '-File', str(self.entry_lib / 'wagflow.ps1'),
                                  '-Queue', spec, '-Repo', 'o/repo', *extra],
                                 env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=45)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -1479,7 +1514,7 @@ class QueueEntry(LauncherFixtures):
         self.assertNotIn('--implementer', seen['args'])
         for extra in (['o/repo#7', '-ClearLimit', 'codex'], ['-Queue', 'bugs', '-Repo', 'o/repo', '-ClearLimit', 'gpt']):
             with self.subTest(extra=extra):
-                result = subprocess.run([PWSH, '-NoProfile', '-File', str(self.entry_lib / 'github-workbench.ps1'), *extra],
+                result = subprocess.run([PWSH, '-NoProfile', '-File', str(self.entry_lib / 'wagflow.ps1'), *extra],
                                         env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=45)
                 self.assertEqual(2, result.returncode, result.stdout + result.stderr)
                 self.assertIn('-ClearLimit takes codex, claude or kimi and belongs to -Queue', result.stdout)
@@ -1494,7 +1529,7 @@ class QueueEntry(LauncherFixtures):
                 self.assertEqual(spec, seen['spec'])
                 self.assertNotIn(spec, seen['args'])
                 self.assertEqual(labelquery.parse(spec[6:]), labelquery.parse(seen['spec'][6:]))
-                self.assertFalse(any('AGWORKBENCH_QUEUE_SPEC' in arg for arg in seen['args']))
+                self.assertFalse(any('WAGFLOW_QUEUE_SPEC' in arg for arg in seen['args']))
 
     # --- #38 r23: the entry point itself, called by name -------------------------------------------
 
@@ -1503,12 +1538,12 @@ class QueueEntry(LauncherFixtures):
         root = Path(tempfile.mkdtemp(prefix='wb-install-'))
         self.addCleanup(shutil.rmtree, root, True)
         shutil.copytree(self.entry_lib, root / 'lib')
-        shutil.copyfile(ROOT / 'github-workbench.cmd', root / 'github-workbench.cmd')
-        shutil.copyfile(LIB / 'github-workbench-entry.ps1', root / 'github-workbench.ps1')
+        shutil.copyfile(ROOT / 'wagflow.cmd', root / 'wagflow.cmd')
+        shutil.copyfile(LIB / 'wagflow-entry.ps1', root / 'wagflow.ps1')
         dump = self.temp / 'conductor-start.json'
         (self.temp / 'dump_start.py').write_text(
             'import json, os, sys\n'
-            f'json.dump({{"args": sys.argv[1:], "spec": os.environ.get("AGWORKBENCH_QUEUE_SPEC")}}, '
+            f'json.dump({{"args": sys.argv[1:], "spec": os.environ.get("WAGFLOW_QUEUE_SPEC")}}, '
             f'open(r"{dump}", "w", encoding="utf-8"))\n'
             'sys.exit(int(os.environ.get("STUB_EXIT", "0")))\n', encoding='utf-8')
         self.cmd('python', f'"{sys.executable}" "{self.temp / "dump_start.py"}" %*')
@@ -1518,7 +1553,7 @@ class QueueEntry(LauncherFixtures):
         return root, dump, env
 
     def by_name(self, shell, call, env):
-        """Run `call` (PowerShell text calling github-workbench by name) in a script, and report
+        """Run `call` (PowerShell text calling wagflow by name) in a script, and report
         what the caller's session looks like afterwards."""
         caller = Path(tempfile.mkdtemp(prefix='wb-caller-'))
         self.addCleanup(shutil.rmtree, caller, True)
@@ -1526,7 +1561,7 @@ class QueueEntry(LauncherFixtures):
         script.write_text(
             "$before = (Get-Location).Path\n"
             "$envBefore = @(Get-ChildItem Env: | ForEach-Object Name)\n"
-            "$kind = (Get-Command github-workbench).CommandType.ToString()\n"
+            "$kind = (Get-Command wagflow).CommandType.ToString()\n"
             + call + "\n"
             "$code = $LASTEXITCODE\n"
             "$leaked = @(Get-ChildItem Env: | Where-Object { $_.Name -notin $envBefore } | ForEach-Object Name)\n"
@@ -1537,8 +1572,8 @@ class QueueEntry(LauncherFixtures):
                                 env=env, cwd=ROOT, capture_output=True, text=True, timeout=60)
         return json.loads(result.stdout.strip().splitlines()[-1]), result
 
-    def test_a_double_quoted_query_survives_github_workbench_by_name(self):
-        # r23 M1: PowerShell resolves github-workbench.ps1 before the .cmd, whose command line would
+    def test_a_double_quoted_query_survives_github_wagflow_by_name(self):
+        # r23 M1: PowerShell resolves wagflow.ps1 before the .cmd, whose command line would
         # split 'where: bug AND NOT "needs design"' at the inner quotes.
         root, dump, env = self.installed()
         spec = 'where: bug AND NOT "needs design" AND label IN ["a,b"] OR "x & y" OR "p | q"'
@@ -1549,7 +1584,7 @@ class QueueEntry(LauncherFixtures):
         for shell, case_env in cases:
             with self.subTest(shell=shell, pwsh_on_path=case_env is env):
                 dump.unlink(missing_ok=True)
-                seen, result = self.by_name(shell, "github-workbench -Queue '" + spec.replace("'", "''") +
+                seen, result = self.by_name(shell, "wagflow -Queue '" + spec.replace("'", "''") +
                                             "' -Repo o/repo -Par 2 -DryRun:$false -Yes", case_env)
                 self.assertEqual('ExternalScript', seen['kind'], result.stderr)       # the .ps1, not the .cmd
                 self.assertEqual(0, seen['code'], result.stdout + result.stderr)
@@ -1565,11 +1600,11 @@ class QueueEntry(LauncherFixtures):
 
     def test_the_entry_point_keeps_the_exit_code_and_refuses_what_the_launcher_refuses(self):
         root, dump, env = self.installed()
-        seen, result = self.by_name(PWSH, "github-workbench -Queue bugs -Repo o/repo", dict(env, STUB_EXIT='7'))
+        seen, result = self.by_name(PWSH, "wagflow -Queue bugs -Repo o/repo", dict(env, STUB_EXIT='7'))
         self.assertEqual(7, seen['code'], result.stdout + result.stderr)
-        for call, message in (("github-workbench -Queue bugs -Nonsense", '-Nonsense is not a parameter'),
-                              ("github-workbench -Queue bugs -No", '-No is ambiguous'),
-                              ("github-workbench -Queue", '-Queue needs a value')):
+        for call, message in (("wagflow -Queue bugs -Nonsense", '-Nonsense is not a parameter'),
+                              ("wagflow -Queue bugs -No", '-No is ambiguous'),
+                              ("wagflow -Queue", '-Queue needs a value')):
             with self.subTest(call=call):
                 seen, result = self.by_name(PWSH, call, env)
                 self.assertEqual(2, seen['code'])
@@ -1578,7 +1613,7 @@ class QueueEntry(LauncherFixtures):
     def test_cmd_callers_keep_the_cmd_and_single_quotes_inside_a_query(self):
         root, dump, env = self.installed()
         spec = "where: bug AND NOT 'needs design'"
-        result = subprocess.run(f'cmd /d /c github-workbench -Queue "{spec}" -Repo o/repo', env=env, cwd=ROOT,
+        result = subprocess.run(f'cmd /d /c wagflow -Queue "{spec}" -Repo o/repo', env=env, cwd=ROOT,
                                 capture_output=True, text=True, timeout=60, shell=False)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual(spec, json.loads(dump.read_text(encoding='utf-8'))['spec'])
@@ -1587,15 +1622,15 @@ class QueueEntry(LauncherFixtures):
         root = Path(tempfile.mkdtemp(prefix='wb-install-'))
         self.addCleanup(shutil.rmtree, root, True)
         (root / 'lib').mkdir()
-        shutil.copyfile(LIB / 'github-workbench-entry.ps1', root / 'lib' / 'github-workbench-entry.ps1')
+        shutil.copyfile(LIB / 'wagflow-entry.ps1', root / 'lib' / 'wagflow-entry.ps1')
         for policies, installed in (("[ordered]@{pwsh='RemoteSigned'; 'powershell.exe'='Unrestricted'}", True),
                                     ("[ordered]@{pwsh='RemoteSigned'; 'powershell.exe'='Restricted'}", False),
                                     ("[ordered]@{'powershell.exe'='AllSigned'}", False),
                                     ("[ordered]@{pwsh='Bypass'}", True)):
             with self.subTest(policies=policies):
-                result = ps(". ./lib/Workbench.ps1; Install-PowerShellEntry " + ps_quote(root) + " (" + policies + ")")
+                result = ps(". ./lib/WagFlow.Common.ps1; Install-PowerShellEntry " + ps_quote(root) + " (" + policies + ")")
                 self.assertEqual(0, result.returncode, result.stderr)
-                self.assertEqual(installed, (root / 'github-workbench.ps1').exists())
+                self.assertEqual(installed, (root / 'wagflow.ps1').exists())
                 if not installed:
                     self.assertIn('quote labels with single quotes', result.stdout + result.stderr)
 
@@ -1603,7 +1638,7 @@ class QueueEntry(LauncherFixtures):
         args_file = self.temp / 'python-args.txt'
         args_file.unlink(missing_ok=True)
         self.cmd('python', f'echo %* > "{args_file}"')
-        result = subprocess.run([shell, '-NoProfile', '-File', str(self.entry_lib / 'github-workbench.ps1'), *args],
+        result = subprocess.run([shell, '-NoProfile', '-File', str(self.entry_lib / 'wagflow.ps1'), *args],
                                 env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=45)
         return result, (args_file.read_text(encoding='utf-8', errors='replace').strip() if args_file.exists() else None)
 
@@ -1677,7 +1712,7 @@ class QueueEntry(LauncherFixtures):
         result = self.entry('-Autonomous')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         checkout = Path(self.store.load()['members'][0]['checkout'])
-        record = json.loads((checkout / '.workbench/state/implementer.json').read_text(encoding='utf-8-sig'))
+        record = json.loads((checkout / '.wagflow/state/implementer.json').read_text(encoding='utf-8-sig'))
         self.assertEqual((True, True), (record['autonomous'], record['autoMerge']))
 
     def test_member_auto_merge_switch_reaches_its_checkout(self):
@@ -1685,7 +1720,7 @@ class QueueEntry(LauncherFixtures):
         result = self.entry('-AutoMerge')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         checkout = Path(self.store.load()['members'][0]['checkout'])
-        record = json.loads((checkout / '.workbench/state/implementer.json').read_text(encoding='utf-8-sig'))
+        record = json.loads((checkout / '.wagflow/state/implementer.json').read_text(encoding='utf-8-sig'))
         self.assertIs(True, record['autoMerge'])
 
     def test_fresh_and_resume_preserve_focus_and_publish_result(self):
@@ -1696,11 +1731,11 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual(MAIN_ID, data['result']['claudePane'])
         state = json.loads(self.scenario_path.read_text())
         self.assertEqual(str(self.queue_path), state['created_queue_memberships'][0]['queue'])
-        before = (self.checkout / '.workbench/state/claude.json').read_bytes()
+        before = (self.checkout / '.wagflow/state/claude.json').read_bytes()
         self.retry()
         second = self.entry()
         self.assertEqual(0, second.returncode, second.stdout + second.stderr)
-        self.assertEqual(before, (self.checkout / '.workbench/state/claude.json').read_bytes())
+        self.assertEqual(before, (self.checkout / '.wagflow/state/claude.json').read_bytes())
         for call in self.calls():
             self.assertNotIn(call[:2], [['session', 'select'], ['session', 'focus']])
             if call[:2] == ['session', 'new']:
@@ -1716,13 +1751,13 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual('incomplete', self.store.load()['members'][0]['result']['result'])
         self.assertEqual([], [c for c in self.calls() if c[:2] == ['session', 'type']])
         self.assertEqual(1, sum(c[:2] == ['session', 'close'] for c in self.calls()))
-        original = (self.checkout / '.workbench/state/claude.json').read_bytes()
+        original = (self.checkout / '.wagflow/state/claude.json').read_bytes()
         self.write_helpers()
         self.retry()
         second = self.entry()
         self.assertEqual(0, second.returncode, second.stdout + second.stderr)
         self.assertEqual('ok', self.store.load()['members'][0]['result']['result'])
-        self.assertEqual(original, (self.checkout / '.workbench/state/claude.json').read_bytes())
+        self.assertEqual(original, (self.checkout / '.wagflow/state/claude.json').read_bytes())
         typed = [c for c in self.calls() if c[:2] == ['session', 'type']]
         self.assertEqual([RIGHT_ID, MAIN_ID], [c[-1] for c in typed])
         self.assertEqual(2, sum(c[:2] == ['session', 'new'] and '--name' in c and not c[c.index('--name') + 1].endswith('relay') for c in self.calls()))
@@ -1736,11 +1771,11 @@ class QueueEntry(LauncherFixtures):
         failed = self.store.load()['members'][0]['result']
         self.assertEqual(('relay', True, None), (failed['stage'], failed['infra'], failed['sessionId']))
         self.assertEqual([RIGHT_ID, MAIN_ID], [c[-1] for c in self.calls() if c[:2] == ['session', 'type']])
-        original = (self.checkout / '.workbench/state/claude.json').read_bytes()
+        original = (self.checkout / '.wagflow/state/claude.json').read_bytes()
         self.retry()
         second = self.entry()
         self.assertEqual(0, second.returncode, second.stdout + second.stderr)
-        self.assertEqual(original, (self.checkout / '.workbench/state/claude.json').read_bytes())
+        self.assertEqual(original, (self.checkout / '.wagflow/state/claude.json').read_bytes())
         self.assertEqual([RIGHT_ID, MAIN_ID, RIGHT_ID, MAIN_ID],
                          [c[-1] for c in self.calls() if c[:2] == ['session', 'type']])
         self.assertEqual(1, sum(c[:2] == ['session', 'close'] for c in self.calls()))
@@ -1752,7 +1787,7 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
         result = self.store.load()['members'][0]['result']
         self.assertEqual(('codex', True, None), (result['stage'], result['infra'], result['sessionId']))
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
         self.assertFalse(any(c[:2] == ['session', 'type'] for c in self.calls()))
         self.assertIn(['session', 'close', MAIN_ID], self.calls())
         self.assertFalse(any(c[:2] == ['session', 'restore'] and c[2] != 'none' and c[-1] == MAIN_ID
@@ -1779,7 +1814,7 @@ class QueueEntry(LauncherFixtures):
         self.write_helpers("\nfunction Wait-ShellPrompt { return $false }\n")
         first = self.entry()
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
-        record = self.checkout / '.workbench/state/queue-launch.json'
+        record = self.checkout / '.wagflow/state/queue-launch.json'
         self.assertEqual([MAIN_ID], json.loads(record.read_text(encoding='utf-8-sig'))['sessions'])
         self.retry()
         before = sum(c[:2] == ['session', 'new'] for c in self.calls())
@@ -1802,7 +1837,7 @@ class QueueEntry(LauncherFixtures):
         self.write_helpers("\nfunction Wait-ShellPrompt { return $false }\n")
         first = self.entry()
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
         self.retry()
         self.write_helpers()
         second = self.entry()
@@ -1812,7 +1847,7 @@ class QueueEntry(LauncherFixtures):
         self.scenario['metric_cols'] = [1, 87]
         self.save_scenario()
         marker = self.temp / 'restored.txt'
-        self.write_helpers("\nfunction Restore-AgwintermWindow { Set-Content -LiteralPath " +
+        self.write_helpers("\nfunction Restore-WagtermWindow { Set-Content -LiteralPath " +
                            ps_quote(marker) + " -Value restored }\n")
         result = self.entry()
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -1823,7 +1858,7 @@ class QueueEntry(LauncherFixtures):
         self.scenario['metric_cols'] = 1
         self.save_scenario()
         self.write_helpers("\n$script:WindowTiming = @{ Poll = 0.05; Wait = 0.2 }\n"
-                           "function Restore-AgwintermWindow {}\n")
+                           "function Restore-WagtermWindow {}\n")
         result = self.entry()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         launch = self.store.load()['members'][0]['result']
@@ -1842,9 +1877,9 @@ class QueueEntry(LauncherFixtures):
         self.assertFalse(any(c[:2] in (['session', 'new'], ['session', 'restore']) for c in self.calls()))
 
     def test_terminal_start_failure_is_infrastructure(self):
-        self.env['AGWINTERM_ENABLED'] = '0'
-        self.write_helpers("\nfunction Test-AgwintermRunning { return $false }\n"
-                           "function Start-AgwintermApp { throw 'control pipe unavailable' }\n")
+        self.env['WAGTERM_ENABLED'] = '0'
+        self.write_helpers("\nfunction Test-WagtermRunning { return $false }\n"
+                           "function Start-WagtermApp { throw 'control pipe unavailable' }\n")
         result = self.entry()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         launch = self.store.load()['members'][0]['result']
@@ -1853,9 +1888,9 @@ class QueueEntry(LauncherFixtures):
 
     def test_minimized_window_is_restored_before_agents_start(self):
         marker = self.temp / 'window-restored.txt'
-        self.write_helpers("\nfunction Test-AgwintermMinimized { return -not (Test-Path -LiteralPath " +
+        self.write_helpers("\nfunction Test-WagtermMinimized { return -not (Test-Path -LiteralPath " +
                            ps_quote(marker) + ") }\n"
-                           "function Restore-AgwintermWindow { Set-Content -LiteralPath " +
+                           "function Restore-WagtermWindow { Set-Content -LiteralPath " +
                            ps_quote(marker) + " -Value restored }\n")
         result = self.entry()
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -1879,7 +1914,7 @@ class QueueEntry(LauncherFixtures):
                          {c[2] for c in self.calls() if c[:2] == ['session', 'close']})
         launch = self.store.load()['members'][0]['result']
         self.assertEqual(('relay', True, None), (launch['stage'], launch['infra'], launch['relaySession']))
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
 
     def test_relay_record_write_failure_closes_its_running_session(self):
         self.write_helpers("\n$script:RealAtomicWrite = ${function:Write-AtomicJson}\n"
@@ -1890,7 +1925,7 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertEqual({MAIN_ID, RELAY_ID},
                          {c[2] for c in self.calls() if c[:2] == ['session', 'close']})
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
 
     def test_failed_emergency_close_keeps_relay_id_in_result(self):
         self.scenario['responses'] = [{'args': '^session close ' + RELAY_ID,
@@ -1908,13 +1943,13 @@ class QueueEntry(LauncherFixtures):
 
     def test_adopted_session_is_never_recorded_or_closed(self):
         self.resumed(relay=False)
-        membership = self.checkout / '.workbench/state/queue-member.json'
+        membership = self.checkout / '.wagflow/state/queue-member.json'
         membership.parent.mkdir(parents=True, exist_ok=True)
         membership.write_text(json.dumps(dict(queue=str(self.queue_path), repo='o/repo', number=7)), encoding='utf-8')
         result = self.entry()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertFalse(any(c[:2] == ['session', 'close'] for c in self.calls()))
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
 
     def test_ignored_late_result_closes_this_attempts_sessions(self):
         self.write_helpers("\n$script:RealAtomicWrite = ${function:Write-AtomicJson}\n"
@@ -1929,7 +1964,7 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertEqual({MAIN_ID, RELAY_ID},
                          {c[2] for c in self.calls() if c[:2] == ['session', 'close']})
-        self.assertFalse((self.checkout / '.workbench/state/queue-launch.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-launch.json').exists())
         state = json.loads(self.scenario_path.read_text())
         self.assertFalse(any(w['sessions'] for w in state['tree']['workspaces']))
 
@@ -1984,7 +2019,7 @@ class QueueEntry(LauncherFixtures):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertIn('outside the queue', result.stdout)
         self.assertFalse(any(c[:2] in [['session', 'restore'], ['session', 'type']] for c in self.calls()))
-        self.assertFalse((self.checkout / '.workbench/state/queue-member.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/queue-member.json').exists())
 
     def test_member_github_proxy_preserves_arguments_without_network(self):
         capture = self.temp / 'gh-args.json'
@@ -2099,7 +2134,7 @@ class QueueEntry(LauncherFixtures):
         created = [c for c in self.calls() if c[:2] == ['session', 'new']]
         self.assertEqual({'#7 fix-x', '#7 relay'}, {c[c.index('--name') + 1] for c in created})
         self.assertEqual(['repo-kimi'] * len(created), [c[c.index('--workspace-name') + 1] for c in created])
-        membership = json.loads((self.checkout / '.workbench/state/queue-member.json').read_text(encoding='utf-8-sig'))
+        membership = json.loads((self.checkout / '.wagflow/state/queue-member.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(('kimi', 'repo-kimi'), (membership['queueName'], membership['workspace']))
         # A retry finds the issue and relay sessions in repo-kimi, and a same-named pair in repo is not its.
         tree = json.loads(self.scenario_path.read_text())['tree']
@@ -2137,7 +2172,7 @@ class QueueEntry(LauncherFixtures):
     def test_the_queue_profile_reaches_the_member_launch(self):
         result = self.entry('-RevmuxProfile', 'kimi-only')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        saved = json.loads((self.checkout / '.workbench/state/implementer.json').read_text(encoding='utf-8-sig'))
+        saved = json.loads((self.checkout / '.wagflow/state/implementer.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(('codex', 'kimi-only'), (saved['tool'], saved['revmuxProfile']))
 
     def check_partial_clone_retry(self, shell):
@@ -2166,7 +2201,7 @@ class QueueEntry(LauncherFixtures):
     def test_unrecoverable_claude_identity_is_incomplete_not_active(self):
         first = self.entry()
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        (self.checkout / '.workbench/state/claude.json').unlink()
+        (self.checkout / '.wagflow/state/claude.json').unlink()
         self.retry()
         result = self.entry()
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
@@ -2183,7 +2218,7 @@ class QueueEntry(LauncherFixtures):
                      ['-Queue', 'o/repo#1', '-NewSession'], ['-Parallel', '2'], ['-Retry'],
                      ['-Queue', 'o/repo#1', '-Version'], ['o/repo#1', '-Queue', 'o/repo#2']):
             with self.subTest(args=args):
-                run = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), *args],
+                run = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), *args],
                                      env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=15)
                 self.assertEqual(2, run.returncode, run.stdout + run.stderr)
                 self.assertEqual([], self.calls())
@@ -2204,7 +2239,7 @@ class AdoptionEntry(LauncherFixtures):
         for key in list(self.env):
             if key.startswith('CODEX_') or key.startswith('CLAUDE'):
                 self.env.pop(key)
-        self.env.update(CLAUDECODE='1', AGWINTERM_PANE_ID=MAIN_ID, AGWINTERM_SESSION_ID=MAIN_ID)
+        self.env.update(CLAUDECODE='1', WAGTERM_PANE_ID=MAIN_ID, WAGTERM_SESSION_ID=MAIN_ID)
         self.env['CLAUDE_CONFIG_DIR'] = str(self.temp / 'claude-home')
         self.env['CODEX_HOME'] = str(self.temp / 'codex-home')
         self.env['CLAUDE_CODE_SESSION_ID'] = '77777777-7777-4777-8777-777777777777'
@@ -2225,7 +2260,7 @@ class AdoptionEntry(LauncherFixtures):
         # Claude boundary. No network, user trust files, or actual agent can be reached.
         self.entry_lib = self.temp / 'entry lib'
         self.entry_lib.mkdir()
-        for name in ['github-workbench.ps1', 'hub.py']:
+        for name in ['wagflow.ps1', 'hub.py']:
             shutil.copyfile(LIB / name, self.entry_lib / name)
         overrides = (
             "\nfunction Get-IssueInfo { return @{ title='fix-x'; state='OPEN' } }\n"
@@ -2241,12 +2276,12 @@ class AdoptionEntry(LauncherFixtures):
             "function Invoke-ClaudeHere { param($Checkout,$Issue); "
             "Add-Content -LiteralPath " + ps_quote(self.effects) + " -Value claude-here; "
             "Write-Output \"CLAUDE-HERE: $Checkout $Issue\"; $global:LASTEXITCODE=0 }\n")
-        (self.entry_lib / 'Workbench.ps1').write_text(
-            (LIB / 'Workbench.ps1').read_text(encoding='utf-8-sig') + overrides, encoding='utf-8')
+        (self.entry_lib / 'WagFlow.Common.ps1').write_text(
+            (LIB / 'WagFlow.Common.ps1').read_text(encoding='utf-8-sig') + overrides, encoding='utf-8')
 
     def entry(self, *args, shell=PWSH):
         return subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                               str(self.entry_lib / 'github-workbench.ps1'), 'o/repo#7', *args],
+                               str(self.entry_lib / 'wagflow.ps1'), 'o/repo#7', *args],
                               env=self.env, cwd=ROOT, capture_output=True, text=True,
                               encoding='utf-8', errors='replace', timeout=40)
 
@@ -2271,7 +2306,7 @@ class AdoptionEntry(LauncherFixtures):
     def test_claude_adopts_once_and_rerun_never_probes_or_types_into_caller(self):
         first = self.entry()
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        self.assertIn('WORKBENCH ADOPTED', first.stdout)
+        self.assertIn('WAGFLOW ADOPTED', first.stdout)
         self.assertIn(str(self.checkout), first.stdout)
         self.assertNotIn('CLAUDE-HERE:', first.stdout)
         self.assert_caller_untouched()
@@ -2299,17 +2334,17 @@ class AdoptionEntry(LauncherFixtures):
         result = self.entry()
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('CLAUDE-HERE: ' + str(self.checkout) + ' o/repo#7', result.stdout)
-        self.assertLess(result.stdout.index('WORKBENCH ADOPTED'), result.stdout.index('CLAUDE-HERE:'))
+        self.assertLess(result.stdout.index('WAGFLOW ADOPTED'), result.stdout.index('CLAUDE-HERE:'))
         self.assertEqual('claude-here', self.effects.read_text(encoding='utf-8-sig').splitlines()[-1])
         self.assert_caller_untouched()
-        record = json.loads((self.checkout / '.workbench/state/claude.json').read_text(encoding='utf-8-sig'))
+        record = json.loads((self.checkout / '.wagflow/state/claude.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(str(self.checkout), record['cwd'])
         self.assertEqual('fresh', record['origin'])
 
     def test_adopted_identity_preserves_original_cwd_then_tracks_new_runtime_id(self):
         first = self.entry('-NoRelay')
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        path = self.checkout / '.workbench/state/claude.json'
+        path = self.checkout / '.wagflow/state/claude.json'
         original = json.loads(path.read_text(encoding='utf-8-sig'))
         # Re-serializing a PowerShell 7 DateTime can trim fractional zeros. A valid
         # unchanged identity should not be rewritten at all during a rerun.
@@ -2319,7 +2354,7 @@ class AdoptionEntry(LauncherFixtures):
         self.assertEqual(str(self.original_cwd), original['cwd'])
         self.assertEqual(self.env['CLAUDE_CODE_SESSION_ID'], original['sessionId'])
         result = subprocess.run([PWSH, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                                 str(self.entry_lib / 'github-workbench.ps1'), 'o/repo#7', '-NewSession', '-NoRelay'],
+                                 str(self.entry_lib / 'wagflow.ps1'), 'o/repo#7', '-NewSession', '-NoRelay'],
                                 cwd=self.checkout, env=self.env, capture_output=True, text=True, timeout=40)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual(original, json.loads(path.read_text(encoding='utf-8-sig')))
@@ -2353,7 +2388,7 @@ class AdoptionEntry(LauncherFixtures):
         self.assert_refused_without_mutation()
 
     def change_tree_during_checkout(self, tree):
-        with (self.entry_lib / 'Workbench.ps1').open('a', encoding='utf-8') as stream:
+        with (self.entry_lib / 'WagFlow.Common.ps1').open('a', encoding='utf-8') as stream:
             stream.write('\nfunction Grant-ClaudeTrust { $state = Get-Content -Raw -LiteralPath ' +
                          ps_quote(self.scenario_path) + ' | ConvertFrom-Json; $state.tree = ' + ps_json(tree) +
                          '; $state | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath ' +
@@ -2364,7 +2399,7 @@ class AdoptionEntry(LauncherFixtures):
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
         self.assertIn('Adoption refused:', result.stdout)
         self.assertTrue(all(c == ['tree', '--json'] for c in self.calls()), self.calls())
-        self.assertFalse((self.checkout / '.workbench/state/adoption.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/adoption.json').exists())
         self.assertFalse(self.registry_path.exists())
 
     def test_pane_added_after_preflight_is_refused_before_rename_or_move(self):
@@ -2387,7 +2422,7 @@ class AdoptionEntry(LauncherFixtures):
                 self.assert_refused_without_mutation()
 
     def test_missing_caller_is_refused(self):
-        self.env['AGWINTERM_PANE_ID'] = OTHER_ID
+        self.env['WAGTERM_PANE_ID'] = OTHER_ID
         self.assert_refused_without_mutation()
 
     def test_registered_codex_is_refused(self):
@@ -2452,11 +2487,11 @@ class AdoptionEntry(LauncherFixtures):
                                        'once': True}]
         self.save_scenario()
         self.register(claude=MAIN_ID, codex=RIGHT_ID)
-        (self.checkout / '.workbench/state/implementer.json').write_text('{"tool": "claude"}', encoding='utf-8')
+        (self.checkout / '.wagflow/state/implementer.json').write_text('{"tool": "claude"}', encoding='utf-8')
         result = self.entry('-NoRelay')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('has no recorded conversation', result.stdout)
-        record = json.loads((self.checkout / '.workbench/state/implementer-claude.json').read_text(encoding='utf-8-sig'))
+        record = json.loads((self.checkout / '.wagflow/state/implementer-claude.json').read_text(encoding='utf-8-sig'))
         self.assertEqual((RIGHT_ID, 'fresh'), (record['pane'], record['origin']))
         calls = self.calls()
         pin = next(i for i, c in enumerate(calls) if c[:2] == ['session', 'restore'] and c[-1] == RIGHT_ID)
@@ -2506,7 +2541,7 @@ class AdoptionEntry(LauncherFixtures):
         self.fail_registration.touch()
         first = self.entry()
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
-        saved = json.loads((self.checkout / '.workbench/state/adoption.json').read_text(encoding='utf-8-sig'))
+        saved = json.loads((self.checkout / '.wagflow/state/adoption.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(RIGHT_ID, saved['codexPane'])
         self.assertEqual('split', saved['stage'])
         self.fail_registration.unlink()
@@ -2522,7 +2557,7 @@ class AdoptionEntry(LauncherFixtures):
         first = self.entry()
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
         self.assertFalse(self.registry_path.exists())
-        saved = json.loads((self.checkout / '.workbench/state/adoption.json').read_text(encoding='utf-8-sig'))
+        saved = json.loads((self.checkout / '.wagflow/state/adoption.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(RIGHT_ID, saved['codexPane'])
         second = self.entry()
         self.assertEqual(0, second.returncode, second.stdout + second.stderr)
@@ -2533,7 +2568,7 @@ class AdoptionEntry(LauncherFixtures):
     def test_split_intent_recovers_failure_after_reply_before_pane_save(self):
         failure = self.temp / 'fail-split-save'
         failure.touch()
-        with (self.entry_lib / 'Workbench.ps1').open('a', encoding='utf-8') as stream:
+        with (self.entry_lib / 'WagFlow.Common.ps1').open('a', encoding='utf-8') as stream:
             stream.write('\n$script:RealSaveAdoption = ${function:Save-AdoptionState}\n'
                          'function Save-AdoptionState($Checkout,$State) { '
                          "if ($State.stage -eq 'split' -and (Test-Path -LiteralPath " + ps_quote(failure) +
@@ -2542,7 +2577,7 @@ class AdoptionEntry(LauncherFixtures):
         first = self.entry()
         self.assertEqual(1, first.returncode, first.stdout + first.stderr)
         self.assertIn('split reply received but save failed', first.stdout)
-        path = self.checkout / '.workbench/state/adoption.json'
+        path = self.checkout / '.wagflow/state/adoption.json'
         saved = json.loads(path.read_text(encoding='utf-8-sig'))
         self.assertEqual({'session': MAIN_ID, 'claudePane': MAIN_ID, 'stage': 'splitting'}, saved)
         self.assertFalse(self.registry_path.exists())
@@ -2570,7 +2605,7 @@ class AdoptionEntry(LauncherFixtures):
 
     def test_new_codex_prompt_timeout_does_not_start_shell_claude(self):
         self.env.pop('CLAUDECODE')
-        with (self.entry_lib / 'Workbench.ps1').open('a', encoding='utf-8') as stream:
+        with (self.entry_lib / 'WagFlow.Common.ps1').open('a', encoding='utf-8') as stream:
             stream.write('\nfunction Wait-ShellPrompt { param($Pane,$TimeoutSeconds,[switch]$Adopted); '
                          "if ($TimeoutSeconds -ne 90 -or $Adopted) {throw 'incorrect fresh pane wait'}; return $false }\n")
         result = self.entry('-NoRelay')
@@ -2607,19 +2642,19 @@ class AdoptionEntry(LauncherFixtures):
     def test_new_session_uses_existing_creation_path(self):
         result = self.entry('-NewSession', '-NoRelay')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertNotIn('WORKBENCH ADOPTED', result.stdout)
+        self.assertNotIn('WAGFLOW ADOPTED', result.stdout)
         self.assertNotIn('CLAUDE-HERE:', result.stdout)
         self.assertTrue(any(c[:2] == ['session', 'new'] for c in self.calls()))
         self.assertFalse(any(c[:2] in [['session', 'rename'], ['session', 'move'], ['workspace', 'new']]
                              for c in self.calls()))
 
     def test_outside_terminal_uses_existing_creation_path(self):
-        self.env['AGWINTERM_ENABLED'] = '0'
-        with (self.entry_lib / 'Workbench.ps1').open('a', encoding='utf-8') as stream:
-            stream.write('\nfunction Test-AgwintermRunning { return $true }\n')
+        self.env['WAGTERM_ENABLED'] = '0'
+        with (self.entry_lib / 'WagFlow.Common.ps1').open('a', encoding='utf-8') as stream:
+            stream.write('\nfunction Test-WagtermRunning { return $true }\n')
         result = self.entry('-NoRelay')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertNotIn('WORKBENCH ADOPTED', result.stdout)
+        self.assertNotIn('WAGFLOW ADOPTED', result.stdout)
         self.assertTrue(any(c[:2] == ['session', 'new'] for c in self.calls()))
         self.assertFalse(any(c[:2] in [['session', 'rename'], ['session', 'move']] for c in self.calls()))
 
@@ -2627,7 +2662,7 @@ class AdoptionEntry(LauncherFixtures):
     def test_windows_powershell_adoption(self):
         result = self.entry('-NoRelay', shell=WINDOWS_PS)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn('WORKBENCH ADOPTED', result.stdout)
+        self.assertIn('WAGFLOW ADOPTED', result.stdout)
         self.assert_caller_untouched()
 
     def test_existing_issue_elsewhere_is_refused(self):
@@ -2652,20 +2687,20 @@ class AdoptionContext(LauncherFixtures):
         for shell in [PWSH] + ([WINDOWS_PS] if WINDOWS_PS else []):
             with self.subTest(shell=shell):
                 checkout = self.temp / "it's a checkout" / Path(shell).stem
-                script = ("$ErrorActionPreference='Stop'; . ./lib/Workbench.ps1; Initialize-Mailbox -Checkout " +
+                script = ("$ErrorActionPreference='Stop'; . ./lib/WagFlow.Common.ps1; Initialize-Mailbox -Checkout " +
                           ps_quote(checkout) + ' -ClaudePane ' + ps_quote(MAIN_ID) +
                           ' -CodexPane ' + ps_quote(RIGHT_ID))
                 result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
                                         env=self.env, cwd=ROOT, capture_output=True, text=True, timeout=20)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                registry = json.loads((checkout / '.workbench/state/agents.json').read_text(encoding='utf-8-sig'))
+                registry = json.loads((checkout / '.wagflow/state/agents.json').read_text(encoding='utf-8-sig'))
                 for role, pane in [('claude', MAIN_ID), ('codex', RIGHT_ID)]:
                     self.assertEqual(str(checkout), registry['agents'][role]['cwd'])
                     self.assertEqual(pane, registry['agents'][role]['pane'])
 
     def test_launch_string_matches_original_format_with_explicit_fields(self):
         arguments = {'Checkout': str(self.temp / "it's a checkout"), 'Issue': 'o/repo#7'}
-        script = ('. ./lib/Workbench.ps1; $a = @{}; $inputArgs = ' + ps_json(arguments) +
+        script = ('. ./lib/WagFlow.Common.ps1; $a = @{}; $inputArgs = ' + ps_json(arguments) +
                   '; foreach ($p in $inputArgs.PSObject.Properties) {$a[$p.Name]=$p.Value}; '
                   "$l = Get-PaneLaunchArgs 'pane-codex.ps1' $a; "
                   "$expected = @($l.Exe,'-NoLogo','-ExecutionPolicy','Bypass','-File',"
@@ -2679,18 +2714,18 @@ class AdoptionContext(LauncherFixtures):
 
     def test_context_quotes_and_encoding(self):
         checkout = self.temp / "it's a checkout"
-        (checkout / '.workbench/state').mkdir(parents=True)
-        workbench = self.temp / "it's the launcher"
-        result = ps('. ./lib/Workbench.ps1; $script:Root = ' + ps_quote(workbench) +
+        (checkout / '.wagflow/state').mkdir(parents=True)
+        wagflow = self.temp / "it's the launcher"
+        result = ps('. ./lib/WagFlow.Common.ps1; $script:Root = ' + ps_quote(wagflow) +
                     '; Format-AdoptedBlock ' + ps_quote(checkout) + " 'o/repo#7'", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        path = checkout / '.workbench/state/adopted.sh'
+        path = checkout / '.wagflow/state/adopted.sh'
         self.assertFalse(path.read_bytes().startswith(b'\xef\xbb\xbf'))
         lines = path.read_text(encoding='utf-8').splitlines()
         self.assertEqual(['cd', '--', checkout.as_posix()], shlex.split(lines[0])[:3])
         self.assertIn('|| return 1 2>/dev/null || exit 1', lines[0])
-        self.assertEqual(['export', 'AGWORKBENCH=' + str(workbench),
-                          'AI_HUB=' + str(checkout / '.workbench'), 'AI_BOX=claude'], shlex.split(lines[1]))
+        self.assertEqual(['export', 'WAGFLOW=' + str(wagflow),
+                          'AI_HUB=' + str(checkout / '.wagflow'), 'AI_BOX=claude'], shlex.split(lines[1]))
         context = next(line.removeprefix('context:  ') for line in result.stdout.splitlines()
                        if line.startswith('context:  '))
         self.assertEqual(['.', path.as_posix()], shlex.split(context))
@@ -2698,19 +2733,19 @@ class AdoptionContext(LauncherFixtures):
     @unittest.skipUnless(BASH, 'Bash not installed')
     def test_context_round_trips_quotes_overrides_stale_env_and_fails_closed(self):
         checkout = self.temp / "it's a checkout"
-        state = checkout / '.workbench/state'
+        state = checkout / '.wagflow/state'
         state.mkdir(parents=True)
-        workbench = self.temp / "it's the launcher"
-        result = ps('. ./lib/Workbench.ps1; $script:Root = ' + ps_quote(workbench) +
+        wagflow = self.temp / "it's the launcher"
+        result = ps('. ./lib/WagFlow.Common.ps1; $script:Root = ' + ps_quote(wagflow) +
                     '; Format-AdoptedBlock ' + ps_quote(checkout) + " 'o/repo#7'", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         context = next(line.removeprefix('context:  ') for line in result.stdout.splitlines()
                        if line.startswith('context:  '))
         context_file = state / 'adopted.sh'
         self.assertFalse(context_file.read_bytes().startswith(b'\xef\xbb\xbf'))
-        code = 'import json,os; print(json.dumps([os.getcwd(),os.environ["AGWORKBENCH"],os.environ["AI_HUB"],os.environ["AI_BOX"]]))'
+        code = 'import json,os; print(json.dumps([os.getcwd(),os.environ["WAGFLOW"],os.environ["AI_HUB"],os.environ["AI_BOX"]]))'
         command = context + ' && ' + self.bash_quote(Path(sys.executable).as_posix()) + ' -c ' + self.bash_quote(code)
-        env = dict(os.environ, AI_HUB='stale hub', AGWORKBENCH='old launcher', AI_BOX='codex')
+        env = dict(os.environ, AI_HUB='stale hub', WAGFLOW='old launcher', AI_BOX='codex')
         sourced = subprocess.run([self.BASH, '--noprofile', '--norc', '-c', command], env=env,
                                  capture_output=True, text=True, timeout=20)
         if sourced.returncode and 'CreateFileMapping' in sourced.stderr and 'Win32 error 5' in sourced.stderr:
@@ -2718,7 +2753,7 @@ class AdoptionContext(LauncherFixtures):
         self.assertEqual(0, sourced.returncode, sourced.stdout + sourced.stderr)
         cwd, root, hub, box = json.loads(sourced.stdout)
         self.assertEqual(checkout, Path(cwd))
-        self.assertEqual([str(workbench), str(checkout / '.workbench'), 'claude'], [root, hub, box])
+        self.assertEqual([str(wagflow), str(checkout / '.wagflow'), 'claude'], [root, hub, box])
         # Keep the script accessible but make its guarded cd target unavailable.
         saved = self.temp / 'saved context.sh'
         shutil.copyfile(context_file, saved)
@@ -2739,7 +2774,7 @@ class AdoptionContext(LauncherFixtures):
             'param($Checkout,$Issue)\n@($Checkout,$Issue) | ConvertTo-Json -Compress\n', encoding='utf-8')
         checkout = self.temp / "it's the checkout"
         # Suppress the user's profile in this subprocess while retaining the real argument builder.
-        result = ps('. ./lib/Workbench.ps1; $realArgs = ${function:Get-PaneLaunchArgs}; '
+        result = ps('. ./lib/WagFlow.Common.ps1; $realArgs = ${function:Get-PaneLaunchArgs}; '
                     'function Get-PaneLaunchArgs($Script,$Arguments) { $l = & $realArgs $Script $Arguments; '
                     "$l.Args = @('-NoProfile') + $l.Args; return $l }; $script:Lib = " + ps_quote(lib) +
                     '; Invoke-ClaudeHere -Checkout ' + ps_quote(checkout) + " -Issue 'o/repo#7'")
@@ -2751,7 +2786,7 @@ class AdoptionContext(LauncherFixtures):
 class LauncherScript(LauncherFixtures):
     def run_entry(self, *args):
         legacy = [] if '-Version' in args else ['-NewSession']
-        return subprocess.run([PWSH, "-NoProfile", "-File", str(LIB / "github-workbench.ps1"), *args, *legacy],
+        return subprocess.run([PWSH, "-NoProfile", "-File", str(LIB / "wagflow.ps1"), *args, *legacy],
                               env=self.env, cwd=ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=20)
 
@@ -2770,14 +2805,14 @@ class LauncherScript(LauncherFixtures):
         result = self.run_entry("o/repo#7", "-DryRun")
         self.assertEqual(1, result.returncode)
         self.assertNotIn("incomplete", result.stdout)
-        self.assertNotIn("github-workbench 'o/repo#7'", result.stdout)
+        self.assertNotIn("wagflow 'o/repo#7'", result.stdout)
         self.assertNotIn("Resume and complete", result.stdout)
 
     def test_repair_preserves_no_relay_before_session_setup(self):
         self.cmd("gh", "echo lookup failed\nexit /b 6")
         result = self.run_entry("o/repo#7", "-NoRelay")
         self.assertEqual(1, result.returncode)
-        self.assertIn("github-workbench 'o/repo#7' -NoRelay", result.stdout)
+        self.assertIn("wagflow 'o/repo#7' -NoRelay", result.stdout)
 
     def test_failed_clone_does_not_poison_the_empty_checkout(self):
         self.cmd("gh", 'if "%1"=="issue" (\necho {"title":"fix-x","state":"OPEN"}\nexit /b 0\n)\necho clone failed\nexit /b 7')
@@ -2803,7 +2838,7 @@ class LauncherScript(LauncherFixtures):
         self.assertEqual(2, len(creates))
         relay = creates[1][creates[1].index("--command") + 1]
         self.assertIn("--repo 'o/repo' --branch 'issue-7-fix-x'", relay)
-        self.assertIn("--hub '" + str(self.checkout / ".workbench") + "'", relay)
+        self.assertIn("--hub '" + str(self.checkout / ".wagflow") + "'", relay)
         self.assertIn("--claude-pane '" + MAIN_ID + "'", relay)
         self.assertIn("config starting", self.log())
         self.assertIn("trust starting", self.log())
@@ -2841,13 +2876,13 @@ class ClaudeImplementer(LauncherFixtures):
                       reservedAt='2026-09-23T00:00:00Z', issue='o/repo#7', checkout=str(self.checkout))
         record.update(changes)
         name = 'implementer-claude.json' if role == 'implementer' else 'claude.json'
-        path = self.checkout / '.workbench/state' / name
+        path = self.checkout / '.wagflow/state' / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding='utf-8')
         return path
 
     def state(self, name):
-        return json.loads((self.checkout / '.workbench/state' / name).read_text(encoding='utf-8-sig'))
+        return json.loads((self.checkout / '.wagflow/state' / name).read_text(encoding='utf-8-sig'))
 
     def pins(self):
         return {c[-1]: c[2] for c in self.calls() if c[:2] == ['session', 'restore']}
@@ -2887,7 +2922,7 @@ class ClaudeImplementer(LauncherFixtures):
         self.assertIn("pane-codex.ps1'", self.typed_right()[0])
         self.assertEqual('codex', self.state('agents.json')['agents']['codex']['tool'])
         self.assertEqual({'tool': 'codex', 'revmuxProfile': 'comprehensive', 'autoMerge': False, 'autonomous': False, 'bigReview': False, 'onLimit': 'failover', 'cleanup': 'merged'}, self.state('implementer.json'))
-        self.assertFalse((self.checkout / '.workbench/state/implementer-claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/implementer-claude.json').exists())
 
     def test_claude_composes_right_pane_relay_mailbox_identity_and_pin(self):
         result = self.body('claude')
@@ -2947,7 +2982,7 @@ class ClaudeImplementer(LauncherFixtures):
         first = self.body('claude')
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
         self.reuse_scenario('esc to interrupt')
-        state = self.checkout / '.workbench/state'
+        state = self.checkout / '.wagflow/state'
         before = {p.name: p.read_bytes() for p in state.iterdir() if p.is_file() and p.suffix == '.json'}
         calls = len(self.calls())
         result = self.body('codex')
@@ -2985,7 +3020,7 @@ class ClaudeImplementer(LauncherFixtures):
 
     def test_dry_run_reports_the_tool_and_writes_nothing(self):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-NewSession', '-DryRun', '-Implementer', 'claude'],
                                 env=self.env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
@@ -2993,11 +3028,11 @@ class ClaudeImplementer(LauncherFixtures):
         self.assertIn('implementer: claude (revmux profile claude-only)', result.stdout)
         self.assertIn('pane-implementer-claude.ps1', result.stdout)
         self.assertIn('--implementer-tool claude', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
         self.assertFalse(self.calls())
 
     def test_entry_refuses_an_unknown_implementer(self):
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-Implementer', 'aider'], env=self.env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -3031,7 +3066,7 @@ class ClaudeImplementer(LauncherFixtures):
         self.scenario['text'][MAIN_ID] = 'Claude is working'
         self.save_scenario()
         self.register(claude=MAIN_ID, codex=RIGHT_ID)
-        (self.checkout / '.workbench/state/implementer.json').write_text('{"tool": "claude"}', encoding='utf-8')
+        (self.checkout / '.wagflow/state/implementer.json').write_text('{"tool": "claude"}', encoding='utf-8')
 
     def test_planner_recovery_never_takes_the_implementers_conversation(self):
         self.running_planner_without_record()
@@ -3049,7 +3084,7 @@ class ClaudeImplementer(LauncherFixtures):
         self.legacy_transcript(OTHER_ID, 1000)
         result = self.flow(no_relay=True, implementer='claude')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertFalse((self.checkout / '.workbench/state/claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/claude.json').exists())
         self.assertIn('cannot be told apart', result.stdout)
         self.assertNotIn(MAIN_ID, self.pins())
 
@@ -3059,7 +3094,7 @@ class ClaudeImplementer(LauncherFixtures):
         self.legacy_transcript(RELAY_ID, 5000)
         result = self.flow(no_relay=True, implementer='claude')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertFalse((self.checkout / '.workbench/state/implementer-claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/implementer-claude.json').exists())
         self.assertIn('Claude implementer pane', result.stdout)
         self.assertNotIn('start Claude implementer there yourself', result.stdout)   # r15 m3
         self.assertNotIn(RIGHT_ID, self.pins())
@@ -3071,9 +3106,9 @@ class ClaudeImplementer(LauncherFixtures):
                     " 'o/repo#7' " + ps_quote(RIGHT_ID) + " -Role implementer; $r.pane", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual(RIGHT_ID, result.stdout.strip().splitlines()[-1])
-        archived = list((self.checkout / '.workbench/state').glob('implementer-claude.*.json'))
+        archived = list((self.checkout / '.wagflow/state').glob('implementer-claude.*.json'))
         self.assertEqual(1, len(archived))
-        self.assertFalse((self.checkout / '.workbench/state/claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/claude.json').exists())
 
     # --- AC3 / B5: the pane script --------------------------------------------------------------
 
@@ -3093,14 +3128,14 @@ class ClaudeImplementer(LauncherFixtures):
         before = path.read_bytes()
         fresh = self.pane()
         self.assertEqual(0, fresh.returncode, fresh.stdout + fresh.stderr)
-        self.assertIn("'--session-id' '" + OTHER_ID + "' '/workbench-implementer o/repo#7'", fresh.stdout)
+        self.assertIn("'--session-id' '" + OTHER_ID + "' '/wagflow-implementer o/repo#7'", fresh.stdout)
         self.transcript()
         resumed = self.pane()
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
         self.assertIn("'--resume' '" + OTHER_ID + "'", resumed.stdout)
         self.assertIn('IMPLEMENTER', resumed.stdout)
         self.assertIn('wait-mail --box codex', resumed.stdout)
-        self.assertNotIn('/workbench-implementer o/repo#7', resumed.stdout)
+        self.assertNotIn('/wagflow-implementer o/repo#7', resumed.stdout)
         self.assertEqual(before, path.read_bytes())
         self.assertFalse(self.registry_path.exists())
 
@@ -3139,24 +3174,24 @@ class ClaudeImplementer(LauncherFixtures):
         self.registry_path.write_text('{}', encoding='utf-8')
         command = ('function claude { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$AgentArgs); '
                    '[pscustomobject]@{Args=$AgentArgs; Cwd=(Get-Location).Path; Hub=$env:AI_HUB; '
-                   'Box=$env:AI_BOX; Root=$env:AGWORKBENCH} | ConvertTo-Json -Compress }; '
+                   'Box=$env:AI_BOX; Root=$env:WAGFLOW} | ConvertTo-Json -Compress }; '
                    '& ./lib/pane-implementer-claude.ps1 -Checkout ' + ps_quote(self.checkout) + " -Issue 'o/repo#7'")
         result = ps(command, env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         capture = json.loads(result.stdout.splitlines()[-1])
-        self.assertEqual(('codex', str(self.checkout / '.workbench'), str(self.checkout), str(ROOT)),
+        self.assertEqual(('codex', str(self.checkout / '.wagflow'), str(self.checkout), str(ROOT)),
                          (capture['Box'], capture['Hub'], capture['Cwd'], capture['Root']))
         self.assertEqual(['--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)', 'PowerShell(git push:*)',
                           'PowerShell(gh:*)', 'WebFetch', 'WebSearch',
-                          '--settings', str(self.checkout / '.workbench/state/claude-settings.json'),
-                          '--session-id', OTHER_ID, '/workbench-implementer o/repo#7'], capture['Args'])
+                          '--settings', str(self.checkout / '.wagflow/state/claude-settings.json'),
+                          '--session-id', OTHER_ID, '/wagflow-implementer o/repo#7'], capture['Args'])
 
     def test_repair_text_offers_no_launch_for_an_unidentified_implementer(self):
         base = ("$l=@{Stage='relay'; MailboxReady=$true; CodexLaunch='THE-LINE'; ImplementerTool='claude'; "
                 "IssueRef='o/repo#7'; ImplementerIdentityReady=")
         for ready, offered in (('$false', False), ('$true', True)):
             with self.subTest(ready=ready):
-                result = ps('. ./lib/Workbench.ps1; ' + base + ready + '}; Format-RepairMessage $l', env=self.env)
+                result = ps('. ./lib/WagFlow.Common.ps1; ' + base + ready + '}; Format-RepairMessage $l', env=self.env)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertEqual(offered, 'In the Claude implementer pane, once it is at an empty shell prompt: THE-LINE'
                                  in result.stdout)
@@ -3172,7 +3207,7 @@ class ClaudeImplementer(LauncherFixtures):
             f'json.dump({{"args": sys.argv[1:], "env": os.environ.get("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION")}}, '
             f'open(r"{dump}", "w", encoding="utf-8"))\n', encoding='utf-8')
         self.cmd('claude', f'"{sys.executable}" "{self.temp / "claude_dump.py"}" %*')
-        settings = self.checkout / '.workbench/state/claude-settings.json'
+        settings = self.checkout / '.wagflow/state/claude-settings.json'
         for script in ('pane-implementer-claude.ps1', 'pane-claude.ps1'):
             for shell in [PWSH] + ([WINDOWS_PS] if WINDOWS_PS else []):
                 with self.subTest(script=script, shell=shell):
@@ -3192,13 +3227,13 @@ class ClaudeImplementer(LauncherFixtures):
     def test_the_quiet_settings_file_is_written_atomically_and_only_when_needed(self):
         # #33 r20 m1: both panes start at once; a writer never leaves it half written or fails the other.
         path = self.temp / 'state' / 'claude-settings.json'
-        code = ('. ./lib/Workbench.ps1; $p = ' + ps_quote(path) + '; '
+        code = ('. ./lib/WagFlow.Common.ps1; $p = ' + ps_quote(path) + '; '
                 'Write-ClaudeQuietSettings $p; $first = (Get-Item -LiteralPath $p).LastWriteTimeUtc; '
                 'Start-Sleep -Milliseconds 50; Write-ClaudeQuietSettings $p; '
                 'if ((Get-Item -LiteralPath $p).LastWriteTimeUtc -ne $first) { throw "rewritten though unchanged" }; '
                 '[IO.File]::WriteAllText($p, "{}"); Write-ClaudeQuietSettings $p; '
                 '$jobs = 1..6 | ForEach-Object { Start-Job -ScriptBlock { param($root, $file) Set-Location $root; '
-                '. ./lib/Workbench.ps1; 1..20 | ForEach-Object { try { [IO.File]::Delete($file) } catch { }; '
+                '. ./lib/WagFlow.Common.ps1; 1..20 | ForEach-Object { try { [IO.File]::Delete($file) } catch { }; '
                 'Write-ClaudeQuietSettings $file } } -ArgumentList (Get-Location).Path, $p }; '
                 '$jobs | Wait-Job | Receive-Job -ErrorAction Stop; '
                 "Get-ChildItem -LiteralPath (Split-Path $p) -Filter '*.tmp' | ForEach-Object { throw ('temp left: ' + $_.Name) }")
@@ -3218,7 +3253,7 @@ class ClaudeImplementer(LauncherFixtures):
                 result = ps('& ./lib/pane-claude.ps1 -Checkout ' + ps_quote(self.checkout) + " -Issue 'o/repo#7' -WhatIfOnly",
                             env=self.env)
                 self.assertNotEqual(0, result.returncode)
-                self.assertIn("replace the workbench's own --settings", result.stderr)
+                self.assertIn("replace the WagFlow's own --settings", result.stderr)
 
     def test_codex_is_not_required(self):
         self.assertIsNone(shutil.which('codex', path=self.env['PATH']))
@@ -3236,18 +3271,19 @@ class ClaudeImplementer(LauncherFixtures):
                                                 'sessions': [{'id': OTHER_ID, 'name': '#7 fix-x',
                                                               'paneIds': [OTHER_ID, MAIN_ID]}]}]}
         self.save_scenario()
-        env = dict(self.env, CLAUDECODE='1', AGWINTERM_PANE_ID=MAIN_ID, AGWINTERM_SESSION_ID=OTHER_ID)
-        result = ps(". ./lib/Workbench.ps1; try { $null = Get-AdoptionPlan (Get-Tree) " + ps_quote(self.checkout) +
+        env = dict(self.env, CLAUDECODE='1', WAGTERM_PANE_ID=MAIN_ID, WAGTERM_SESSION_ID=OTHER_ID)
+        result = ps(". ./lib/WagFlow.Common.ps1; try { $null = Get-AdoptionPlan (Get-Tree) " + ps_quote(self.checkout) +
                     " 'repo' 7; 'adopted' } catch [AdoptRefused] { $_.Exception.Message }", env=env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('registered as Codex', result.stdout)
 
     def test_installer_ships_the_implementer_command(self):
-        command = (ROOT / 'claude/commands/workbench-implementer.md').read_text(encoding='utf-8')
+        command = (ROOT / 'claude/commands/wagflow-implementer.md').read_text(encoding='utf-8')
         for needle in ['AGREED: plan vK', 'IMPLEMENT plan vK', 'IMPLEMENTED <short sha>', 'FIXED <short sha>',
                        'wait-mail --box codex', 'Never push', 'Commit your own work', '--body-file']:
             self.assertIn(needle, command)
-        self.assertIn('claude\\commands\\*.md', (ROOT / 'install.ps1').read_text(encoding='utf-8'))
+        self.assertIn("'wagflow-implementer.md' = 'wagflow-implementer.md'",
+                      (ROOT / 'install.ps1').read_text(encoding='utf-8'))
         planner = (ROOT / 'claude/commands/start-github-issue.md').read_text(encoding='utf-8')
         self.assertIn("Never commit the implementer's uncommitted work yourself", planner)
 
@@ -3296,11 +3332,11 @@ class AutoMergeLaunch(LauncherFixtures):
         self.assertIs(True, self.state('implementer.json')['autoMerge'])
 
     def test_a_pre_23_record_reads_as_the_config_default(self):
-        state = self.checkout / '.workbench/state'
+        state = self.checkout / '.wagflow/state'
         state.mkdir(parents=True)
         (state / 'implementer.json').write_text('{"tool": "codex", "revmuxProfile": "comprehensive"}', encoding='utf-8')
-        result = ps(". ./lib/Workbench.ps1; $r = Resolve-Implementer -Checkout " + ps_quote(self.checkout) +
-                    " -Config (Get-WorkbenchConfig) -NoProbe; $r.AutoMerge", env=self.env)
+        result = ps(". ./lib/WagFlow.Common.ps1; $r = Resolve-Implementer -Checkout " + ps_quote(self.checkout) +
+                    " -Config (Get-WagFlowConfig) -NoProbe; $r.AutoMerge", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual('False', result.stdout.strip())
 
@@ -3330,7 +3366,7 @@ class AutoMergeLaunch(LauncherFixtures):
                                ('closeHelpers', 'false', False), ('closeHelpers', 0, False)):
             with self.subTest(key=key, value=value):
                 self.config_path.write_text(json.dumps({'checkoutRoot': str(self.temp), key: value}), encoding='utf-8')
-                result = ps('. ./lib/Workbench.ps1; Get-WorkbenchConfig | Out-Null; "loaded"', env=self.env)
+                result = ps('. ./lib/WagFlow.Common.ps1; Get-WagFlowConfig | Out-Null; "loaded"', env=self.env)
                 if ok:
                     self.assertIn('loaded', result.stdout, result.stderr)
                 else:
@@ -3342,7 +3378,7 @@ class AutoMergeLaunch(LauncherFixtures):
             with self.subTest(value=value):
                 self.config_path.write_text(json.dumps({'checkoutRoot': str(self.temp), 'autoMerge': value}),
                                             encoding='utf-8')
-                result = ps('. ./lib/Workbench.ps1; Get-WorkbenchConfig | Out-Null; "loaded"', env=self.env)
+                result = ps('. ./lib/WagFlow.Common.ps1; Get-WagFlowConfig | Out-Null; "loaded"', env=self.env)
                 if value is None:     # null is "not set": the default applies
                     self.assertIn('loaded', result.stdout, result.stderr)
                 else:
@@ -3350,7 +3386,7 @@ class AutoMergeLaunch(LauncherFixtures):
                     self.assertIn('autoMerge', result.stderr + result.stdout)
 
     def entry(self, *args):
-        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7', *args],
+        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7', *args],
                               env=self.env, cwd=ROOT, capture_output=True, text=True,
                               encoding='utf-8', errors='replace', timeout=20)
 
@@ -3365,7 +3401,7 @@ class AutoMergeLaunch(LauncherFixtures):
         result = self.entry('-NewSession', '-DryRun', '-AutoMerge')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('auto-merge on', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
         self.assertFalse(self.calls())
 
 
@@ -3400,14 +3436,14 @@ class FailoverLaunch(LauncherFixtures):
     def relay_record(self, text, age=120, kind='limited'):
         sys.path.insert(0, str(LIB))
         import limits
-        path = self.checkout / '.workbench/state/relay.json'
+        path = self.checkout / '.wagflow/state/relay.json'
         data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         data['limits'] = {'codex': {'kind': kind, 'tool': 'codex', 'tail': limits.tail_hash(text),
                                     'since': time.time() - age, 'announced': True}}
         path.write_text(json.dumps(data), encoding='utf-8')
 
     def processes(self, *extra):
-        hub = str(self.checkout / '.workbench')
+        hub = str(self.checkout / '.wagflow')
         table = [dict(ProcessId=self.PANE_PID, ParentProcessId=1, Name='pwsh.exe',
                       CommandLine=f"pwsh -File pane-codex.ps1 -Checkout '{self.checkout}'"),
                  dict(ProcessId=self.NODE_PID, ParentProcessId=self.PANE_PID, Name='node.exe',
@@ -3574,11 +3610,11 @@ class FailoverLaunch(LauncherFixtures):
         self.assertEqual('codex', self.state('implementer.json')['tool'])
 
     def test_not_exactly_one_agent_process_is_refused(self):
-        hub = str(self.checkout / '.workbench')
+        hub = str(self.checkout / '.wagflow')
         second = dict(ProcessId=5000, ParentProcessId=1, Name='codex.exe',
                       CommandLine=f"codex.exe -c shell_environment_policy.set.AI_HUB='{hub}'")
         other_checkout = dict(ProcessId=5001, ParentProcessId=1, Name='codex.exe',
-                              CommandLine="codex.exe -c shell_environment_policy.set.AI_HUB='C:\\elsewhere\\.workbench'")
+                              CommandLine="codex.exe -c shell_environment_policy.set.AI_HUB='C:\\elsewhere\\.wagflow'")
         for table, found in (([other_checkout], 0), (self.processes(second), 2)):
             with self.subTest(found=found):
                 self.right(self.frame('codex-limited-live'))
@@ -3640,7 +3676,7 @@ class FailoverLaunch(LauncherFixtures):
     def test_entry_refuses_failover_with_a_chosen_tool_or_queue(self):
         for extra in (['-Implementer', 'claude'], ['-NewSession'], ['-Queue', 'o/repo#7']):
             with self.subTest(extra=extra):
-                result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+                result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                          '-Failover', *extra], env=self.env, cwd=ROOT, capture_output=True,
                                         text=True, encoding='utf-8', errors='replace', timeout=20)
                 self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -3651,8 +3687,8 @@ class FailoverLaunch(LauncherFixtures):
         before = self.state('implementer.json')
         calls = len(self.calls())
         # Run as from a plain terminal: no adoption of this test's (real) caller pane.
-        env = {k: v for k, v in self.env.items() if not k.startswith('AGWINTERM_')}
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        env = {k: v for k, v in self.env.items() if not k.startswith('WAGTERM_')}
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-DryRun', '-Failover'], env=env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -3667,7 +3703,7 @@ class NamedCheckoutLaunch(LauncherFixtures):
 
     def named(self, number=7, queue='kimi', repo='o/repo', checkout=None):
         directory = self.temp / f'repo-{queue}-issue-{number}'
-        state = directory / '.workbench' / 'state'
+        state = directory / '.wagflow' / 'state'
         state.mkdir(parents=True, exist_ok=True)
         (state / 'queue-member.json').write_text(json.dumps({
             'queue': str(self.temp / f'repo.{queue}.json'), 'repo': repo, 'number': number, 'queueName': queue,
@@ -3676,8 +3712,8 @@ class NamedCheckoutLaunch(LauncherFixtures):
 
     def dry_run(self, cwd, *extra):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}' + chr(10) + 'exit /b 0')
-        env = {k: v for k, v in self.env.items() if not k.startswith('AGWINTERM_')}
-        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        env = {k: v for k, v in self.env.items() if not k.startswith('WAGTERM_')}
+        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                '-DryRun', *extra], env=env, cwd=cwd, capture_output=True, text=True,
                               encoding='utf-8', errors='replace', timeout=30)
 
@@ -3714,7 +3750,7 @@ class NamedCheckoutLaunch(LauncherFixtures):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn(f"named queue 'kimi': checkout {named}, workspace 'repo-kimi'", result.stdout)
         # r2 m5: a membership that cannot be read is refused, naming it; never a silent plain launch.
-        membership = named / '.workbench' / 'state' / 'queue-member.json'
+        membership = named / '.wagflow' / 'state' / 'queue-member.json'
         for broken in ('{broken', '[1, 2]'):
             with self.subTest(broken=broken):
                 membership.write_text(broken, encoding='utf-8')
@@ -3748,7 +3784,7 @@ class AgentRoots(LauncherFixtures):
         frame = LIMIT_FRAMES / 'claude-limited-idle.txt'
         for shell in [PWSH] + ([WINDOWS_PS] if WINDOWS_PS else []):
             with self.subTest(shell=shell):
-                command = (". ./lib/Workbench.ps1; $before = $OutputEncoding.WebName; "
+                command = (". ./lib/WagFlow.Common.ps1; $before = $OutputEncoding.WebName; "
                            "$t = [IO.File]::ReadAllText(" + ps_quote(frame) + ", [Text.Encoding]::UTF8); "
                            "$r = Get-PaneLimit $t claude; \"$($r.kind)|$($before -eq $OutputEncoding.WebName)\"")
                 result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
@@ -3760,24 +3796,24 @@ class AgentRoots(LauncherFixtures):
         for value, ok in ((False, True), (True, True), ('false', False), (0, False)):
             with self.subTest(value=value):
                 self.config_path.write_text(json.dumps({'failover': value}), encoding='utf-8')
-                result = ps('. ./lib/Workbench.ps1; (Get-WorkbenchConfig).failover', env=self.env)
+                result = ps('. ./lib/WagFlow.Common.ps1; (Get-WagFlowConfig).failover', env=self.env)
                 self.assertEqual(ok, result.returncode == 0, result.stdout + result.stderr)
                 if ok:
                     self.assertEqual(str(value), result.stdout.strip())
 
     def roots(self, tool, table, identity=None):
         if identity:
-            path = self.checkout / '.workbench/state/implementer-claude.json'
+            path = self.checkout / '.wagflow/state/implementer-claude.json'
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({'sessionId': identity}), encoding='utf-8')
-        result = ps(". ./lib/Workbench.ps1; function Get-AgentProcesses { " + ps_quote(json.dumps(table)) +
+        result = ps(". ./lib/WagFlow.Common.ps1; function Get-AgentProcesses { " + ps_quote(json.dumps(table)) +
                     " | ConvertFrom-Json }; @(Find-AgentRoot " + ps_quote(self.checkout) + " '" + tool +
                     "') | ForEach-Object { $_.ProcessId }", env=self.env)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         return [int(x) for x in result.stdout.split()]
 
     def test_codex_root_skips_wrappers_and_children(self):
-        hub = str(self.checkout / '.workbench')
+        hub = str(self.checkout / '.wagflow')
         mark = f"shell_environment_policy.set.AI_HUB='{hub}'"
         table = [dict(ProcessId=10, ParentProcessId=1, Name='pwsh.exe', CommandLine=f'pwsh -File pane-codex.ps1 {mark}'),
                  dict(ProcessId=11, ParentProcessId=10, Name='cmd.exe', CommandLine=f'cmd /c codex.cmd {mark}'),
@@ -3799,7 +3835,7 @@ class AgentRoots(LauncherFixtures):
         # #65: `kimi -c` carries nothing of the checkout; its parent, the pane's pwsh, does.
         co = str(self.checkout)
         table = [dict(ProcessId=30, ParentProcessId=1, Name='pwsh.exe',
-                      CommandLine=f'"C:\\pwsh.exe" -NoLogo -ExecutionPolicy Bypass -File C:\\agw\\lib\\pane-implementer-kimi.ps1 -Checkout {co} -Issue o/repo#7 -Resume'),
+                      CommandLine=f'"C:\\pwsh.exe" -NoLogo -ExecutionPolicy Bypass -File C:\\wag\\lib\\pane-implementer-kimi.ps1 -Checkout {co} -Issue o/repo#7 -Resume'),
                  dict(ProcessId=31, ParentProcessId=30, Name='kimi.exe', CommandLine='kimi.exe --yolo -c'),
                  dict(ProcessId=32, ParentProcessId=31, Name='kimi.exe', CommandLine='kimi.exe --yolo -c'),   # an auto-update re-exec
                  dict(ProcessId=40, ParentProcessId=1, Name='pwsh.exe',
@@ -3809,7 +3845,7 @@ class AgentRoots(LauncherFixtures):
                  dict(ProcessId=60, ParentProcessId=1, Name='pwsh.exe', CommandLine=f'pwsh -File pane-codex.ps1 -Checkout {co}'),
                  dict(ProcessId=61, ParentProcessId=60, Name='kimi.exe', CommandLine='kimi.exe')]
         self.assertEqual([31], self.roots('kimi', table))
-        quoted = [dict(table[0], CommandLine=f"pwsh -File 'C:\\agw\\lib\\pane-implementer-kimi.ps1' -Checkout '{co}' -Issue 'o/repo#7'")] + table[1:2]
+        quoted = [dict(table[0], CommandLine=f"pwsh -File 'C:\\wag\\lib\\pane-implementer-kimi.ps1' -Checkout '{co}' -Issue 'o/repo#7'")] + table[1:2]
         self.assertEqual([31], self.roots('kimi', quoted))
         self.assertEqual([], self.roots('kimi', table[3:]))
 
@@ -3883,8 +3919,8 @@ class KimiImplementer(LauncherFixtures):
 
     def dry_run(self, *extra):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        env = {k: v for k, v in self.env.items() if not k.startswith('AGWINTERM_')}
-        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        env = {k: v for k, v in self.env.items() if not k.startswith('WAGTERM_')}
+        return subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                '-NewSession', '-DryRun', *extra], env=env, cwd=ROOT, capture_output=True, text=True,
                               encoding='utf-8', errors='replace', timeout=30)
 
@@ -3909,7 +3945,7 @@ class KimiImplementer(LauncherFixtures):
         self.assertIn('pane-implementer-kimi.ps1', result.stdout)
         self.assertIn('--implementer-tool kimi', result.stdout)
         self.assertIn(f'kimi: {self.kimi}; web tools checked off', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
         self.assertFalse(self.calls())
         self.assertFalse(self.kimi_calls.exists())
         (self.kimi_home / 'config.toml').unlink()
@@ -3933,7 +3969,7 @@ class KimiImplementer(LauncherFixtures):
         self.assertEqual({'tool': 'kimi', 'revmuxProfile': 'claude-only', 'autoMerge': False, 'autonomous': False, 'bigReview': False,
                           'onLimit': 'failover', 'cleanup': 'merged'}, self.state('implementer.json'))
         self.assertIn('Kimi implementer starting in the right pane', result.stdout)
-        self.assertFalse((self.checkout / '.workbench/state/implementer-claude.json').exists())
+        self.assertFalse((self.checkout / '.wagflow/state/implementer-claude.json').exists())
 
     def test_config_selects_kimi_and_other_tools_are_unchanged(self):
         self.configure(implementer='kimi')
@@ -3941,12 +3977,12 @@ class KimiImplementer(LauncherFixtures):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertEqual('kimi', self.state('implementer.json')['tool'])
         self.configure(implementer='kimi', revmuxProfile='comprehensive')
-        chosen = ps(". ./lib/Workbench.ps1; Get-RevmuxProfile kimi 'comprehensive'", env=self.env)
+        chosen = ps(". ./lib/WagFlow.Common.ps1; Get-RevmuxProfile kimi 'comprehensive'", env=self.env)
         self.assertEqual('comprehensive', chosen.stdout.strip())                 # revmuxProfile wins
         # No revmux on this PATH: kimi falls back to claude-only (#66; its warning is tested below).
         for tool, profile in (('codex', 'comprehensive'), ('claude', 'claude-only'), ('kimi', 'claude-only')):
             with self.subTest(tool=tool):
-                out = ps(f". ./lib/Workbench.ps1; Get-RevmuxProfile {tool} $null 3>$null", env=self.env)
+                out = ps(f". ./lib/WagFlow.Common.ps1; Get-RevmuxProfile {tool} $null 3>$null", env=self.env)
                 self.assertEqual(profile, out.stdout.strip())
 
     def test_kimi_reviews_with_kimi_mixed_when_revmux_has_it(self):
@@ -3959,17 +3995,17 @@ class KimiImplementer(LauncherFixtures):
                                     ('garbage', 'echo not json', 'claude-only')):
             with self.subTest(case=case):
                 self.cmd('revmux', body)
-                out = ps(". ./lib/Workbench.ps1; Get-RevmuxProfile kimi $null 3>&1", env=self.env)
+                out = ps(". ./lib/WagFlow.Common.ps1; Get-RevmuxProfile kimi $null 3>&1", env=self.env)
                 lines = out.stdout.strip().splitlines()
                 self.assertEqual(profile, lines[-1], out.stdout + out.stderr)
                 self.assertEqual(profile == 'claude-only', any("no 'kimi-mixed' profile" in l for l in lines))
         (self.temp / 'revmux.cmd').unlink()
-        out = ps(". ./lib/Workbench.ps1; Get-RevmuxProfile kimi $null 3>$null", env=self.env)
+        out = ps(". ./lib/WagFlow.Common.ps1; Get-RevmuxProfile kimi $null 3>$null", env=self.env)
         self.assertEqual('claude-only', out.stdout.strip())                     # no revmux at all
         self.cmd('revmux', 'echo ' + listing)
         for tool, profile in (('codex', 'comprehensive'), ('claude', 'claude-only')):
             with self.subTest(tool=tool):                                       # only kimi probes
-                out = ps(f". ./lib/Workbench.ps1; Get-RevmuxProfile {tool} $null", env=self.env)
+                out = ps(f". ./lib/WagFlow.Common.ps1; Get-RevmuxProfile {tool} $null", env=self.env)
                 self.assertEqual(profile, out.stdout.strip())
         result = self.body('kimi')
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -3987,7 +4023,7 @@ class KimiImplementer(LauncherFixtures):
             ('bad toml', lambda: (self.kimi_home / 'config.toml').write_text('[tools\n', encoding='utf-8'), 'cannot read'),
             # FIX r1 m1: the pane's own refusals are checked here too, before anything is recorded.
             ('kimiArgs', lambda: self.configure(kimiArgs=['--yolo']), "kimiArgs: '--yolo' would re-decide"),
-            ('foreign role file', self.foreign_role, 'not written by agworkbench'),
+            ('foreign role file', self.foreign_role, 'not written by wagflow'),
         ]
         for name, breaks, reason in cases:
             with self.subTest(case=name):
@@ -4002,7 +4038,7 @@ class KimiImplementer(LauncherFixtures):
                 self.assertIn('the Kimi implementer cannot start', result.stdout)
                 self.assertIn(reason, result.stdout)
                 self.assertFalse(any(c[:2] in (['session', 'new'], ['session', 'restore']) for c in self.calls()))
-                self.assertFalse((self.checkout / '.workbench/state/implementer.json').exists())
+                self.assertFalse((self.checkout / '.wagflow/state/implementer.json').exists())
 
     def foreign_role(self):
         role = self.checkout / '.kimi-code/AGENTS.md'
@@ -4020,7 +4056,7 @@ class KimiImplementer(LauncherFixtures):
         path_stub.mkdir()
         (path_stub / 'kimi.cmd').write_text('@echo off\n', encoding='utf-8')
         env = dict(self.env, PATH=str(path_stub) + os.pathsep + self.env['PATH'])
-        find = lambda config: ps(". ./lib/Workbench.ps1; Find-KimiExe " + config, env=env).stdout.strip()
+        find = lambda config: ps(". ./lib/WagFlow.Common.ps1; Find-KimiExe " + config, env=env).stdout.strip()
         self.assertEqual(str(self.kimi), find("@{kimiPath=" + ps_quote(self.kimi) + "}"))           # kimiPath first
         self.assertEqual(str(path_stub / 'kimi.cmd'), find('@{kimiPath=$null}'))                     # then PATH
         self.assertEqual('', find("@{kimiPath=" + ps_quote(self.temp / 'none.exe') + "}"))           # never a guess
@@ -4032,20 +4068,20 @@ class KimiImplementer(LauncherFixtures):
                                   ({'failoverOrder': ['codex', 'aider']}, 'failoverOrder'), ({'failoverOrder': 'codex,claude'}, 'failoverOrder')):
             with self.subTest(settings=settings):
                 self.configure(**settings)
-                result = ps('. ./lib/Workbench.ps1; Get-WorkbenchConfig | Out-Null', env=self.env)
+                result = ps('. ./lib/WagFlow.Common.ps1; Get-WagFlowConfig | Out-Null', env=self.env)
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn(message, result.stdout + result.stderr)
         self.configure(failoverOrder=['kimi', 'claude'], kimiArgs=['-m', 'k2'])
-        out = ps(". ./lib/Workbench.ps1; $c = Get-WorkbenchConfig; ($c.failoverOrder -join ','), ($c.kimiArgs -join ' ')", env=self.env)
+        out = ps(". ./lib/WagFlow.Common.ps1; $c = Get-WagFlowConfig; ($c.failoverOrder -join ','), ($c.kimiArgs -join ' ')", env=self.env)
         self.assertEqual(['kimi,claude', '-m k2'], out.stdout.split('\n')[:2])
 
     def test_entry_accepts_kimi_and_refuses_unknown_tools(self):
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-Implementer', 'aider'], env=self.env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
         self.assertIn('-Implementer must be codex, claude or kimi', result.stdout)
-        clear = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), '-Queue', 'o/repo#7',
+        clear = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), '-Queue', 'o/repo#7',
                                 '-ClearLimit', 'aider'], env=self.env, cwd=ROOT, capture_output=True, text=True,
                                encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(2, clear.returncode)
@@ -4058,15 +4094,15 @@ class KimiImplementer(LauncherFixtures):
         fresh = self.pane('-WhatIfOnly')
         self.assertEqual(0, fresh.returncode, fresh.stdout + fresh.stderr)
         self.assertIn(f"would run: {ps_quote(self.kimi)} '--yolo'\n", fresh.stdout + '\n')
-        for expected in ('would set: AI_BOX=codex', f"would set: AI_HUB={self.checkout / '.workbench'}",
-                         f'would set: AGWORKBENCH={ROOT}', 'would set: KIMI_CODE_NO_AUTO_UPDATE=1',
-                         'would set: GH_TOKEN=agworkbench-refused', 'would set: GIT_CONFIG_COUNT=5',
+        for expected in ('would set: AI_BOX=codex', f"would set: AI_HUB={self.checkout / '.wagflow'}",
+                         f'would set: WAGFLOW={ROOT}', 'would set: KIMI_CODE_NO_AUTO_UPDATE=1',
+                         'would set: GH_TOKEN=wagflow-refused', 'would set: GIT_CONFIG_COUNT=5',
                          'would set: console output encoding UTF-8',
-                         f"would set: PATH={self.checkout / '.workbench/state/kimi-bin'}"):
+                         f"would set: PATH={self.checkout / '.wagflow/state/kimi-bin'}"):
             with self.subTest(expected=expected):
                 self.assertIn(expected, fresh.stdout)
         self.assertRegex(fresh.stdout, r'would set: KIMI_SHELL_PATH=.*\\bin\\bash\.exe')
-        self.assertRegex(fresh.stdout, r'would set: BASH_ENV=.*/\.workbench/state/kimi-bin/env\.sh')
+        self.assertRegex(fresh.stdout, r'would set: BASH_ENV=.*/\.wagflow/state/kimi-bin/env\.sh')
         self.assertNotIn('--agent-file', fresh.stdout)            # ignored by Kimi 2.1.1 in interactive mode
         self.assertFalse((self.checkout / '.kimi-code').exists())  # -WhatIfOnly writes nothing
         none = self.pane('-Resume', '-WhatIfOnly')
@@ -4099,11 +4135,11 @@ class KimiImplementer(LauncherFixtures):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         calls = self.kimi_calls.read_text(encoding='utf-8')
         self.assertIn('ARGS --yolo', calls)
-        self.assertIn(f"ENV AI_BOX=codex AI_HUB={self.checkout / '.workbench'} GH_TOKEN=agworkbench-refused", calls)
+        self.assertIn(f"ENV AI_BOX=codex AI_HUB={self.checkout / '.wagflow'} GH_TOKEN=wagflow-refused", calls)
         self.assertIn('GIT_CONFIG_COUNT=5 NOUPDATE=1', calls)
         self.assertIn(f'CWD {self.checkout}', calls)
         self.assertIn('GitHub issue o/repo#7', (self.checkout / '.kimi-code/AGENTS.md').read_text(encoding='utf-8'))
-        self.assertTrue((self.checkout / '.workbench/state/kimi-bin/git').exists())
+        self.assertTrue((self.checkout / '.wagflow/state/kimi-bin/git').exists())
         trusted = list((self.kimi_home / 'workspace-trust').iterdir())
         self.assertEqual(1, len(trusted))
         self.assertEqual(str(self.checkout.resolve()), json.loads(trusted[0].read_text(encoding='utf-8'))['root'])
@@ -4111,7 +4147,7 @@ class KimiImplementer(LauncherFixtures):
         self.env['STUB_KIMI_SESSION'] = 'session_abc'
         resumed = self.pane('-Resume')
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
-        notes = list((self.checkout / '.workbench/inbox/codex').glob('*-relay-*.md'))
+        notes = list((self.checkout / '.wagflow/inbox/codex').glob('*-relay-*.md'))
         self.assertEqual(1, len(notes))
         self.assertIn('resumed after restart', notes[0].read_text(encoding='utf-8'))
         self.assertIn('ARGS --yolo -c', self.kimi_calls.read_text(encoding='utf-8'))
@@ -4133,7 +4169,7 @@ class KimiImplementer(LauncherFixtures):
     def test_kimi_frames_are_never_a_shell_and_idle_ones_are_a_running_agent(self):
         for path in sorted(KIMI_FRAMES.glob('*.txt')):
             with self.subTest(frame=path.name):
-                result = ps(". ./lib/Workbench.ps1; $t = [IO.File]::ReadAllText(" + ps_quote(path) +
+                result = ps(". ./lib/WagFlow.Common.ps1; $t = [IO.File]::ReadAllText(" + ps_quote(path) +
                             ", [Text.Encoding]::UTF8); \"$(Test-ShellReady $t)|$(Test-ImplementerRunningFrame $t 'kimi')\"",
                             env=self.env)
                 shell, running = result.stdout.strip().split('|')
@@ -4238,7 +4274,7 @@ class KimiFailover(LauncherFixtures):
         # FIX r1 m1: kimiArgs and prepare's refusals are checked before the limited Codex is stopped.
         for name, settings, setup, reason in (
                 ('kimiArgs', {'kimiArgs': ['--yolo']}, lambda: None, "kimiArgs: '--yolo' would re-decide"),
-                ('role file', {}, lambda: KimiImplementer.foreign_role(self), 'not written by agworkbench')):
+                ('role file', {}, lambda: KimiImplementer.foreign_role(self), 'not written by wagflow')):
             with self.subTest(case=name):
                 self.configure(failoverOrder=['kimi', 'codex'])
                 self.launch()
@@ -4262,8 +4298,8 @@ class KimiFailover(LauncherFixtures):
         self.env['STUB_KIMI_DOCTOR'] = '5'
         (self.kimi_home / 'config.toml').unlink()
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        env = {k: v for k, v in self.env.items() if not k.startswith('AGWINTERM_')}
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        env = {k: v for k, v in self.env.items() if not k.startswith('WAGTERM_')}
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-DryRun', '-Failover'], env=env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=30)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -4276,8 +4312,8 @@ class KimiFailover(LauncherFixtures):
         for saved, expected in (('codex', 'claude'), ('claude', 'codex')):
             with self.subTest(saved=saved):
                 self.configure()
-                out = ps(". ./lib/Workbench.ps1; (Get-FailoverTarget -Checkout " + ps_quote(self.checkout) +
-                         " -Config (Get-WorkbenchConfig) -Saved " + saved + " -NoProbe).Target", env=self.env)
+                out = ps(". ./lib/WagFlow.Common.ps1; (Get-FailoverTarget -Checkout " + ps_quote(self.checkout) +
+                         " -Config (Get-WagFlowConfig) -Saved " + saved + " -NoProbe).Target", env=self.env)
                 self.assertEqual(expected, out.stdout.strip(), out.stderr)
 
 
@@ -4308,7 +4344,7 @@ class BigReviewLaunch(LauncherFixtures):
         self.assertEqual('codex', self.state('implementer.json')['tool'])
 
     def test_entry_refuses_both_switches(self):
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-BigReview', '-NoBigReview'], env=self.env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -4317,12 +4353,12 @@ class BigReviewLaunch(LauncherFixtures):
 
     def test_dry_run_prints_big_review_and_writes_nothing(self):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-NewSession', '-DryRun', '-BigReview'], env=self.env, cwd=ROOT, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('autonomous off; big review on', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
 
 
 class WaitOnLimitLaunch(LauncherFixtures):
@@ -4351,7 +4387,7 @@ class WaitOnLimitLaunch(LauncherFixtures):
         self.assertEqual('failover', self.state('implementer.json')['onLimit'])
 
     def test_entry_refuses_both_switches(self):
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-WaitOnLimit', '-NoWaitOnLimit'], env=self.env, cwd=ROOT, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -4360,12 +4396,12 @@ class WaitOnLimitLaunch(LauncherFixtures):
 
     def test_dry_run_prints_on_limit_and_writes_nothing(self):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-NewSession', '-DryRun', '-WaitOnLimit'], env=self.env, cwd=ROOT, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('big review off; on limit wait', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
 
 
 class AutonomyLaunch(LauncherFixtures):
@@ -4414,7 +4450,7 @@ class AutonomyLaunch(LauncherFixtures):
         self.assertEqual(0, on.returncode, on.stdout + on.stderr)
         self.assertEqual((True, True), self.record())
         self.config_path.write_text(json.dumps({'autonomous': 'yes'}), encoding='utf-8')
-        bad = ps('. ./lib/Workbench.ps1; Get-WorkbenchConfig | Out-Null', env=self.env)
+        bad = ps('. ./lib/WagFlow.Common.ps1; Get-WagFlowConfig | Out-Null', env=self.env)
         self.assertNotEqual(0, bad.returncode)
         self.assertIn('autonomous', bad.stderr + bad.stdout)
 
@@ -4422,7 +4458,7 @@ class AutonomyLaunch(LauncherFixtures):
         for extra, message in ((['-Autonomous', '-NoAutonomous'], '-Autonomous and -NoAutonomous cannot be combined'),
                                (['-Autonomous', '-NoAutoMerge'], '-Autonomous implies auto-merge')):
             with self.subTest(extra=extra):
-                result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7', *extra],
+                result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7', *extra],
                                         env=self.env, cwd=ROOT, capture_output=True, text=True,
                                         encoding='utf-8', errors='replace', timeout=20)
                 self.assertEqual(2, result.returncode, result.stdout + result.stderr)
@@ -4431,12 +4467,12 @@ class AutonomyLaunch(LauncherFixtures):
 
     def test_dry_run_prints_autonomy(self):
         self.cmd('gh', 'echo {"title":"fix-x","state":"OPEN"}\nexit /b 0')
-        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'github-workbench.ps1'), 'o/repo#7',
+        result = subprocess.run([PWSH, '-NoProfile', '-File', str(LIB / 'wagflow.ps1'), 'o/repo#7',
                                  '-NewSession', '-DryRun', '-Autonomous'], env=self.env, cwd=ROOT, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace', timeout=20)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn('auto-merge on; autonomous on', result.stdout)
-        self.assertFalse((self.checkout / '.workbench').exists())
+        self.assertFalse((self.checkout / '.wagflow').exists())
 
 
 if __name__ == "__main__":

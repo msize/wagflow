@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # Vendored from the ai-hub tooling (MIT, same author). Kept close to the original on purpose:
 # it is the tested half of this project - see tests/ there and here.
-"""peer-chat - type one line into the other agent's composer, in this agwinterm window.
+"""peer-chat - type one line into the other agent's composer, in this WagTerm window.
 
-A Windows/agwinterm port of umputun's agterm cookbook recipe `two-agent-chat`
+A Windows/wagterm port of umputun's agterm cookbook recipe `two-agent-chat`
 (https://github.com/umputun/agterm/tree/master/cookbook/two-agent-chat). Same idea and the same
 refusals; the differences are forced by the terminal:
 
-  * agwinterm exposes `surface cursor`, but a caret at the prompt column can mean either a greyed
+  * wagterm exposes `surface cursor`, but a caret at the prompt column can mean either a greyed
     suggestion or a real draft with its caret moved to the start. Only known empty-box placeholders
     authorize typing. A one-row Claude composer at the starting column is classified as ambiguous
     and refused with a distinct reason; other unrecognized content is refused as a draft. Styled
     reads are needed to distinguish suggestions (yeroo/agwinterm#319).
   * agterm reports the foreground command per pane, so the original checks that the target really
-    runs `codex`. agwinterm's tree does not carry that, so the target's tool comes from the hub
-    registry (`agmsg register`), which the agent itself writes, plus the composer shape - a Codex
+    runs `codex`. WagTerm's tree does not carry that, so the target's tool comes from the hub
+    registry (`wagmsg register`), which the agent itself writes, plus the composer shape - a Codex
     composer cannot be mistaken for a Claude one.
   * panes are addressed by pane id from `tree --json`, not by `--pane left|right`.
 
@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import agw  # noqa: E402
+import wag  # noqa: E402
 import hub  # noqa: E402
 import limits  # noqa: E402
 
@@ -66,7 +66,7 @@ FRAGMENT = 24            # how much of the typed text must be visible before sub
 QUEUED_RE = re.compile(r"^\s*• Queued follow-up inputs\s*$")
 CLAUDE_BUSY_RE = re.compile(r"…\s*\((?:\d+h )?(?:\d+m )?\d+s\s*·")
 
-# Claude Code draws its composer as a `>` line between two horizontal rules; agwinterm renders the
+# Claude Code draws its composer as a `>` line between two horizontal rules; wagterm renders the
 # rule with box-drawing dashes and the prompt glyph as `>` (macOS/agterm shows `>`).
 RULE_RE = re.compile(r"^\s*[─━—-]{10,}\s*$")
 CLAUDE_PROMPT_RE = re.compile(r"^\s*[>❯]\s?(.*?)\s*$")
@@ -386,11 +386,11 @@ def composer_state(pane: str, profile: Profile, text: str) -> tuple[str | None, 
         state = 'empty'
     elif body and body.rows == 1:
         try:
-            if agw.cursor_column(pane) == body.prompt_column:
+            if wag.cursor_column(pane) == body.prompt_column:
                 state = 'ambiguous'
-        except (agw.CtlError, OSError):
+        except (wag.CtlError, OSError):
             pass  # Unavailable or malformed cursor data retains the text-only refusal.
-    fresh = agw.pane_text(pane)
+    fresh = wag.pane_text(pane)
     fresh_body = parse_claude_composer(fresh) if profile.tool == 'claude' else None
     fresh_content = fresh_body.content if fresh_body else (composer_content(profile.tool, fresh) if profile.tool != 'claude' else None)
     if dialog_visible(text) or dialog_visible(fresh):
@@ -405,7 +405,7 @@ def dialog_visible(text: str) -> bool:
     return any(CHOOSER_RE.match(line) or KIMI_DIALOG_HINT_RE.match(line) for line in lines)
 
 
-# Control characters that survive whitespace folding. NUL is the dangerous one: agwinterm's
+# Control characters that survive whitespace folding. NUL is the dangerous one: wagterm's
 # session.type writes what it is given, and agterm fixed a bug in v0.25.0 where a NUL truncated the
 # injected text while the Return that followed it still fired - typing half a message and
 # submitting it. ESC and the rest can move a TUI's state without printing anything.
@@ -435,13 +435,13 @@ def normalize(message: str) -> str:
 
 def resolve_target(to: str, pane_opt: str | None, session_opt: str | None) -> tuple[str, Profile, str]:
     """Return (pane id, profile, label for the target). Never guesses between two candidates."""
-    snapshot = agw.tree()
-    mine = agw.my_pane()
+    snapshot = wag.tree()
+    mine = wag.my_pane()
 
     if pane_opt:
-        found = agw.find_pane(pane_opt, snapshot)
+        found = wag.find_pane(pane_opt, snapshot)
         if not found:
-            raise Refused(f"no pane {pane_opt} in this agwinterm window")
+            raise Refused(f"no pane {pane_opt} in this WagTerm window")
         tool = to if to in PROFILES else (hub.lookup(to) or {}).get("tool", "")
         if tool not in PROFILES:
             raise Refused(f"--pane needs --to claude|codex|kimi (or a registered box); got {to!r}")
@@ -453,10 +453,10 @@ def resolve_target(to: str, pane_opt: str | None, session_opt: str | None) -> tu
         tool = entry.get("tool", "")
         if tool not in PROFILES:
             raise Refused(f"box {to!r} is registered as tool {tool!r}, which cannot be typed into")
-        if not pane or not agw.find_pane(pane, snapshot):
+        if not pane or not wag.find_pane(pane, snapshot):
             raise Refused(
                 f"box {to!r} is registered on pane {pane} which is not open any more; "
-                f"ask that agent to re-run `agmsg register`"
+                f"ask that agent to re-run `wagmsg register`"
             )
         return pane, PROFILES[tool], to
 
@@ -465,17 +465,17 @@ def resolve_target(to: str, pane_opt: str | None, session_opt: str | None) -> tu
 
     # No registry entry: fall back to the split this process sits in, one peer per pane.
     if not mine:
-        raise Refused("no AGWINTERM_PANE_ID: run this from inside an agwinterm pane, or pass --pane")
-    located = agw.find_pane(mine, snapshot)
+        raise Refused("no WAGTERM_PANE_ID: run this from inside a WagTerm pane, or pass --pane")
+    located = wag.find_pane(mine, snapshot)
     if not located:
         raise Refused(f"own pane {mine} is not in the tree")
     _, session, _ = located
     if session_opt and session["id"] != session_opt:
-        found = agw.find_session(session_opt, snapshot)
+        found = wag.find_session(session_opt, snapshot)
         if not found:
             raise Refused(f"no session {session_opt}")
         session = found[1]
-    panes = agw.panes_of(session)
+    panes = wag.panes_of(session)
     others = [pane for pane in panes if pane != mine]
     if len(panes) < 2:
         raise Refused("this session has no split: two-agent chat needs one agent per pane")
@@ -487,7 +487,7 @@ def resolve_target(to: str, pane_opt: str | None, session_opt: str | None) -> tu
 # --- sending --------------------------------------------------------------------------------
 
 def precheck(pane: str, profile: Profile) -> None:
-    text = agw.pane_text(pane)
+    text = wag.pane_text(pane)
     if dialog_visible(text):
         raise Refused("a chooser or approval dialog is on screen in the target pane")
     content, state, _ = composer_state(pane, profile, text)
@@ -514,7 +514,7 @@ def verify_typed(pane: str, profile: Profile, typed: str) -> None:
     deadline = now() + VERIFY_TIMEOUT
     seen = ""
     while True:
-        text = agw.pane_text(pane)
+        text = wag.pane_text(pane)
         # Re-checked here, not only in precheck: a dialog can appear between the two, and this is
         # the last look before the submit key goes in. Failed, never Refused - text is already in
         # the composer, so this must not be retried.
@@ -553,7 +553,7 @@ def verify_submitted(pane: str, profile: Profile, typed: str) -> str:
     phase = 'verifying submit'
     try:
         while True:
-            frame = agw.pane_text(pane)
+            frame = wag.pane_text(pane)
             if dialog_visible(frame):
                 raise Failed('a chooser or approval dialog appeared after submit; further keys withheld')
             content, state, fresh = composer_state(pane, profile, frame)
@@ -593,7 +593,7 @@ def verify_submitted(pane: str, profile: Profile, typed: str) -> str:
                     suffix = ' after Return'
                 else:
                     raise Failed(f"pointer still unsent in composer: {content!r}; submit retries exhausted")
-                agw.type_into(pane, key)
+                wag.type_into(pane, key)
                 pause(SETTLE)
                 phase = 'verifying submit' + suffix
                 deadline = now() + SUBMIT_TIMEOUT
@@ -605,7 +605,7 @@ def verify_submitted(pane: str, profile: Profile, typed: str) -> str:
                 needs_key = True
                 continue
             pause(0.25)
-    except (agw.CtlError, OSError) as err:
+    except (wag.CtlError, OSError) as err:
         raise Failed(f"{phase}: {err}; last composer: {content!r}") from err
 
 
@@ -619,15 +619,15 @@ def send_once(pane: str, profile: Profile, text: str, *, dry_run: bool) -> str:
         return 'dry-run'
     phase = 'typing text'
     try:
-        agw.type_into(pane, text)
+        wag.type_into(pane, text)
         pause(SETTLE)
         phase = 'verifying typed text'
         verify_typed(pane, profile, text)
         phase = 'submitting'
-        agw.type_into(pane, profile.submit)
+        wag.type_into(pane, profile.submit)
         pause(SETTLE)
         return verify_submitted(pane, profile, text)
-    except (agw.CtlError, OSError) as err:
+    except (wag.CtlError, OSError) as err:
         raise Failed(f"{phase}: {err}") from err
 
 
@@ -679,7 +679,7 @@ def read_message(args: argparse.Namespace) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="type one line into the peer agent's composer")
     parser.add_argument("--to", required=True, help="a registered box name, or claude|codex|kimi")
-    parser.add_argument("--pane", help="explicit target pane id (from `agwintermctl tree --json`)")
+    parser.add_argument("--pane", help="explicit target pane id (from `wagtermctl tree --json`)")
     parser.add_argument("--session", help="session whose split to use when --to is a bare tool name")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--stdin", action="store_true", help="read the message from stdin")
@@ -709,11 +709,11 @@ def main() -> int:
         text = compose_text(label, message)
         if len(text) > MAX_TYPED:
             print(f"peer-chat: message is {len(text)} chars, over the {MAX_TYPED} typing limit. "
-                  f"Put it in the inbox (`agmsg send ... --nudge`) and send a pointer instead.",
+                  f"Put it in the inbox (`wagmsg send ... --nudge`) and send a pointer instead.",
                   file=sys.stderr)
             return 1
         pane, profile, name = resolve_target(args.to, args.pane, args.session)
-        if pane == agw.my_pane():
+        if pane == wag.my_pane():
             print("peer-chat: refusing to type into my own pane", file=sys.stderr)
             return 1
         sent = send(pane, profile, text, dry_run=args.dry_run, retry=not args.no_retry)
@@ -721,7 +721,7 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         return 130
-    except (Refused, Failed, agw.CtlError, OSError) as err:
+    except (Refused, Failed, wag.CtlError, OSError) as err:
         print(f"peer-chat: {err}", file=sys.stderr)
         return 1
 

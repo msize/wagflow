@@ -761,7 +761,7 @@ class KimiLabel(TriageCase):
             self.triage().run_once(kimi_only=True)
         path = self.folder / 'config.json'
         path.write_text(json.dumps({'triage': {PRODUCT: {'specRepos': [PROJECT]}}}), encoding='utf-8')
-        with patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(path)}), patch('sys.stderr') as err:
+        with patch.dict(os.environ, {'WAGFLOW_CONFIG': str(path)}), patch('sys.stderr') as err:
             self.assertEqual(2, t.main(['run', '--repo', PRODUCT, '--kimi-only']))
         self.assertIn('kimiLabel', ''.join(str(c.args[0]) for c in err.write.call_args_list))
 
@@ -1035,7 +1035,7 @@ class Command(unittest.TestCase):
         self.addCleanup(shutil.rmtree, folder, True)
         config = folder / 'config.json'
         config.write_text('{}', encoding='utf-8')
-        with patch.dict(os.environ, AGWORKBENCH_CONFIG=str(config)), patch('sys.stderr') as err:
+        with patch.dict(os.environ, WAGFLOW_CONFIG=str(config)), patch('sys.stderr') as err:
             self.assertEqual(2, t.main(['run', '--repo', PRODUCT]))
         self.assertIn('no "triage" section', ''.join(c.args[0] for c in err.write.call_args_list))
 

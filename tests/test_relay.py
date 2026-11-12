@@ -28,10 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import relay  # noqa: E402
 import closer  # noqa: E402
 import cleanup  # noqa: E402
-import agw
+import wag
 import hub
 import peerchat
-from frames import CLAUDE_IDLE, CLAUDE_RUNNING, CLAUDE_SUGGESTION, CODEX_IDLE, Clock, FakeAgw, claude, codex, stable_frames
+from frames import CLAUDE_IDLE, CLAUDE_RUNNING, CLAUDE_SUGGESTION, CODEX_IDLE, Clock, FakeWag, claude, codex, stable_frames
 
 BOUNDARY = '2026-09-24T16:00:00+00:00'
 OLD_CREATED = '2026-09-24T15:00:00Z'
@@ -126,7 +126,7 @@ class Pointer(unittest.TestCase):
     def test_the_pointer_carries_the_id_and_the_read_command_but_never_the_body(self):
         message = {"id": "20260922T1-codex-ab12", "from": "codex", "subject": "IMPLEMENTED abc123",
                    "body": "a long body that must stay in the file"}
-        text = relay.pointer_text(message, Path("C:/wb/lib/agmsg.py"), Path("C:/clone/.workbench"))
+        text = relay.pointer_text(message, Path("C:/wb/lib/wagmsg.py"), Path("C:/clone/.wagflow"))
         self.assertIn("20260922T1-codex-ab12", text)
         self.assertIn("read 20260922T1-codex-ab12", text)
         self.assertNotIn("long body", text)
@@ -233,10 +233,10 @@ class DeliveryFixture(unittest.TestCase):
         self.t = 0
         self.enterContext(patch.object(relay, 'now', lambda: self.t))
         # An accidental real terminal request is a hard test failure.
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('real terminal request')))
-        self.status = self.enterContext(patch.object(agw, 'set_status'))
-        self.notify = self.enterContext(patch.object(agw, 'notify'))
-        self.pane = self.enterContext(patch.object(agw, 'pane_text', return_value=CLAUDE_IDLE))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('real terminal request')))
+        self.status = self.enterContext(patch.object(wag, 'set_status'))
+        self.notify = self.enterContext(patch.object(wag, 'notify'))
+        self.pane = self.enterContext(patch.object(wag, 'pane_text', return_value=CLAUDE_IDLE))
         self.real_send = peerchat.send
         self.send = self.enterContext(patch.object(peerchat, 'send', return_value='submitted'))
         self.gh = self.enterContext(patch.object(relay.subprocess, 'run',
@@ -377,10 +377,10 @@ class Delivery(DeliveryFixture):
 
     def test_real_ambiguous_composer_never_types_and_alerts_after_ten_minutes(self):
         self.claude_peer()
-        fake = FakeAgw('claude', frames=[CLAUDE_SUGGESTION], cursors=[2])
+        fake = FakeWag('claude', frames=[CLAUDE_SUGGESTION], cursors=[2])
         self.send.side_effect = self.real_send
-        with patch.object(agw, 'pane_text', fake.pane_text), patch.object(agw, 'type_into', fake.type_into), \
-                patch.object(agw, 'cursor_column', fake.cursor_column):
+        with patch.object(wag, 'pane_text', fake.pane_text), patch.object(wag, 'type_into', fake.type_into), \
+                patch.object(wag, 'cursor_column', fake.cursor_column):
             self.tick(0)
             self.tick(540)
             self.notify.assert_not_called()
@@ -464,14 +464,14 @@ class Delivery(DeliveryFixture):
 
     def test_post_submit_ambiguity_still_alerts_failure_immediately(self):
         self.claude_peer()
-        pointer = peerchat.compose_text('Chat from Workbench: ',
-                                        relay.pointer_text(self.messages['m1'], self.r.agmsg, self.r.hub_dir))
+        pointer = peerchat.compose_text('Chat from WagFlow: ',
+                                        relay.pointer_text(self.messages['m1'], self.r.wagmsg, self.r.hub_dir))
         # The relay reads the first frame for busy state before peerchat's own precheck.
-        fake = FakeAgw('claude', frames=[CLAUDE_IDLE] + stable_frames(CLAUDE_IDLE, claude(pointer), CLAUDE_SUGGESTION), cursors=[2])
+        fake = FakeWag('claude', frames=[CLAUDE_IDLE] + stable_frames(CLAUDE_IDLE, claude(pointer), CLAUDE_SUGGESTION), cursors=[2])
         clock = Clock()
         self.send.side_effect = self.real_send
-        with patch.object(agw, 'pane_text', fake.pane_text), patch.object(agw, 'type_into', fake.type_into), \
-                patch.object(agw, 'cursor_column', fake.cursor_column), \
+        with patch.object(wag, 'pane_text', fake.pane_text), patch.object(wag, 'type_into', fake.type_into), \
+                patch.object(wag, 'cursor_column', fake.cursor_column), \
                 patch.object(peerchat, 'now', clock.now), patch.object(peerchat, 'pause', clock.pause):
             self.tick(0)
         self.assertEqual([pointer, '\n'], fake.keys)
@@ -500,7 +500,7 @@ class Delivery(DeliveryFixture):
         self.assertEqual(0, self.r.holds[('claude', 'm1')].first_at)
 
     def test_prewrite_terminal_failures_also_alert_after_a_minute(self):
-        self.send.side_effect = agw.CtlError('unreachable')
+        self.send.side_effect = wag.CtlError('unreachable')
         self.tick(0)
         self.tick(70)
         self.assert_unannounced()
@@ -531,7 +531,7 @@ class Delivery(DeliveryFixture):
         self.send.side_effect = peerchat.Failed('submit failed')
         self.tick(0)
         self.send.side_effect = None
-        self.status.side_effect = [agw.CtlError('reset unavailable'), None]
+        self.status.side_effect = [wag.CtlError('reset unavailable'), None]
         self.tick(5)
         self.assertEqual(['m1'], self.r.state['announced'])
         self.assertTrue(self.r.holds[('codex', 'm1')].clear_pending)
@@ -558,7 +558,7 @@ class Delivery(DeliveryFixture):
         self.send.side_effect = peerchat.Failed('submit failed')
         self.tick(0)
         self.send.side_effect = None
-        self.status.side_effect = [agw.CtlError('reset unavailable'), agw.CtlError('still unavailable'), None]
+        self.status.side_effect = [wag.CtlError('reset unavailable'), wag.CtlError('still unavailable'), None]
         self.tick(5)
         stored = json.loads(self.r.state_file.read_text(encoding='utf-8'))
         self.assertEqual(['codex'], stored['reset_pending'])
@@ -610,8 +610,8 @@ class Delivery(DeliveryFixture):
         self.messages['m2'] = {'id': 'm2', 'subject': 'second'}
         self.unread['codex'].append('m2')
         self.send.side_effect = [peerchat.Failed('submit failed'), 'submitted']
-        self.status.side_effect = agw.CtlError('status broken')
-        self.notify.side_effect = agw.CtlError('notify broken')
+        self.status.side_effect = wag.CtlError('status broken')
+        self.notify.side_effect = wag.CtlError('notify broken')
         self.tick(0)
         self.notify.assert_called_once()
         self.assertEqual(['m2'], self.r.state['announced'])
@@ -628,13 +628,13 @@ class Delivery(DeliveryFixture):
         self.assertEqual(2, self.notify.call_count)
 
     def test_real_send_refuses_stuck_text_then_rerings_after_composer_empties(self):
-        pointer = peerchat.compose_text('Chat from Workbench: ',
-                                        relay.pointer_text(self.messages['m1'], self.r.agmsg, self.r.hub_dir))
-        fake = FakeAgw(after=lambda f: codex(pointer, 'Working (esc to interrupt)'))
+        pointer = peerchat.compose_text('Chat from WagFlow: ',
+                                        relay.pointer_text(self.messages['m1'], self.r.wagmsg, self.r.hub_dir))
+        fake = FakeWag(after=lambda f: codex(pointer, 'Working (esc to interrupt)'))
         clock = Clock()
         self.send.side_effect = self.real_send
-        with patch.object(agw, 'pane_text', fake.pane_text), patch.object(agw, 'type_into', fake.type_into), \
-                patch.object(agw, 'cursor_column', fake.cursor_column), \
+        with patch.object(wag, 'pane_text', fake.pane_text), patch.object(wag, 'type_into', fake.type_into), \
+                patch.object(wag, 'cursor_column', fake.cursor_column), \
                 patch.object(peerchat, 'now', clock.now), patch.object(peerchat, 'pause', clock.pause):
             self.tick(0)
             self.assert_unannounced()
@@ -1646,7 +1646,7 @@ class GithubLookup(DeliveryFixture):
             nonlocal failed
             if value == 'idle' and not failed:
                 failed = True
-                raise agw.CtlError('reset unavailable')
+                raise wag.CtlError('reset unavailable')
 
         self.status.side_effect = status
 
@@ -1947,7 +1947,7 @@ class FinalNotices(DeliveryFixture):
     def test_drain_waits_for_a_failed_idle_reset_without_ringing_again(self):
         self.prepare_final()
         self.pane.side_effect = lambda pane: CLAUDE_RUNNING if self.t < 70 else CLAUDE_IDLE
-        self.status.side_effect = [None, agw.CtlError('reset unavailable'), None]
+        self.status.side_effect = [None, wag.CtlError('reset unavailable'), None]
         self.assertEqual(0, self.r.run())
         self.assertEqual(75, self.t)
         self.send.assert_called_once()
@@ -2035,7 +2035,7 @@ class FinalNotices(DeliveryFixture):
         self.r._save()
         self.restart_from_disk()
         self.assertEqual('MERGED', self.r.state['pr']['state'])
-        self.status.side_effect = [agw.CtlError('reset unavailable'), None]
+        self.status.side_effect = [wag.CtlError('reset unavailable'), None]
         self.assertEqual(0, self.r.run())
         self.assertEqual(5, self.t)
         self.send.assert_not_called()
@@ -2293,7 +2293,7 @@ class UsageLimits(UsageLimitFixture):
         self.status.assert_not_called()
 
     def test_unreadable_pane_is_skipped(self):
-        self.pane.side_effect = agw.CtlError('gone')
+        self.pane.side_effect = wag.CtlError('gone')
         self.check(times=2)
         self.assertEqual([], self.mails())
 
@@ -2314,7 +2314,7 @@ class WaitOnLimitFixture(UsageLimitFixture):
         self.peer = relay.Peer('codex', 'kimi', 'codex-pane')
         self.r.peers = [self.peer]
         self.config = self.r.hub_dir / 'config.json'
-        self.enterContext(patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(self.config)}))
+        self.enterContext(patch.dict(os.environ, {'WAGFLOW_CONFIG': str(self.config)}))
         self.on_limit('wait')
         self.pane.return_value = limit_frame('kimi-limited-5hour')
 
@@ -2385,7 +2385,7 @@ class WaitOnLimit(WaitOnLimitFixture):
             self.assertEqual([], self.probes_typed())
         self.check()
         self.assertEqual(1, len(self.probes_typed()))
-        self.assertEqual('Chat from Workbench: ' + relay.PROBE_TEXT, self.probes_typed()[0].args[2])
+        self.assertEqual('Chat from WagFlow: ' + relay.PROBE_TEXT, self.probes_typed()[0].args[2])
         self.assertEqual(self.clock, self.episode()['probeAt'])
 
     def test_a_probe_answered_by_the_limit_after_busy_reads_keeps_waiting(self):
@@ -2723,16 +2723,16 @@ class AutonomousClose(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test relay close ' + uuid.uuid4().hex)
-        self.state = self.folder / '.workbench' / 'state'
+        self.state = self.folder / '.wagflow' / 'state'
         self.state.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
         # No config file (#84): the helper sweep in run() is on by default, not the developer's setting.
-        self.enterContext(patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(self.folder / 'no-config.json')}))
+        self.enterContext(patch.dict(os.environ, {'WAGFLOW_CONFIG': str(self.folder / 'no-config.json')}))
         self.write('implementer.json', {'tool': 'claude', 'autonomous': True})
         self.write('loop-done.json', {'pr': 7, 'sha': 'abc', 'followUps': []})
         peers = [relay.Peer('claude', 'claude', self.PLANNER), relay.Peer('codex', 'claude', self.IMPLEMENTER)]
-        self.r = relay.Relay(self.folder / '.workbench', peers, 'o/repo', 'issue-7-fix', 5, 60)
+        self.r = relay.Relay(self.folder / '.wagflow', peers, 'o/repo', 'issue-7-fix', 5, 60)
         self.r.log = lambda text: None
         self.enterContext(patch.object(closer, 'CLOSE_WAIT', 120.0))
         # The wait keeps ringing mail (r18 M1); a ring "reads" nothing unless a test says so.
@@ -2750,14 +2750,14 @@ class AutonomousClose(unittest.TestCase):
                                           {'id': self.RELAY, 'name': '#7 relay'}]},
             {'name': 'other', 'sessions': [{'id': self.OTHER, 'name': '#7 revmux r1'}]}]}
         self.actions = []
-        self.enterContext(patch.object(agw, 'pane_text', side_effect=lambda pane: self.text[pane]))
-        self.enterContext(patch.object(agw, 'tree', side_effect=lambda: self.tree))
-        self.enterContext(patch.object(agw, 'my_pane', return_value=self.RELAY))
-        self.enterContext(patch.object(agw, 'close_session', side_effect=lambda sid: self.actions.append(('close', sid))))
-        self.enterContext(patch.object(agw, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
-        self.notify = self.enterContext(patch.object(agw, 'notify'))
-        self.status = self.enterContext(patch.object(agw, 'set_status'))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('unexpected terminal request')))
+        self.enterContext(patch.object(wag, 'pane_text', side_effect=lambda pane: self.text[pane]))
+        self.enterContext(patch.object(wag, 'tree', side_effect=lambda: self.tree))
+        self.enterContext(patch.object(wag, 'my_pane', return_value=self.RELAY))
+        self.enterContext(patch.object(wag, 'close_session', side_effect=lambda sid: self.actions.append(('close', sid))))
+        self.enterContext(patch.object(wag, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
+        self.notify = self.enterContext(patch.object(wag, 'notify'))
+        self.status = self.enterContext(patch.object(wag, 'set_status'))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('unexpected terminal request')))
         # #41: the checkout cleanup is started, never run, here.
         self.spawn = self.enterContext(patch.object(cleanup, 'start_after_close', side_effect=self.spawned))
         # #33: the finished revmux helper left its completion marker; its direct-mode pane has ended
@@ -3091,7 +3091,7 @@ class AutonomousClose(unittest.TestCase):
         self.assertIn('loop-state done --pr 7', self.blocked())
 
     def test_the_implementer_has_not_read_its_last_mail(self):
-        box = self.folder / '.workbench' / 'inbox' / 'codex'
+        box = self.folder / '.wagflow' / 'inbox' / 'codex'
         box.mkdir(parents=True)
         (box / 'm1.md').write_text('---\nid: m1\nfrom: claude\nto: codex\nsubject: loop complete\n---\nbye\n', encoding='utf-8')
         # During the wait it blocks (no `created`, no merge time: nothing proves it came after the merge).
@@ -3103,7 +3103,7 @@ class AutonomousClose(unittest.TestCase):
     MERGED_AT = '2026-09-26T12:31:50Z'
 
     def mail(self, sender, subject, created, kind='message', message_id=None):
-        """Filed through the hub, as the relay and agmsg file it, with a controlled `created:`."""
+        """Filed through the hub, as the relay and wagmsg file it, with a controlled `created:`."""
         with patch.object(hub, 'now_iso', return_value=created):
             return hub.write_message(to='codex', sender=sender, subject=subject, body='x', kind=kind,
                                      message_id=message_id).stem
@@ -3151,7 +3151,7 @@ class AutonomousClose(unittest.TestCase):
 
     def test_a_hard_blocker_still_refuses_after_the_wait_even_beside_unread_implementer_mail(self):
         # #44 AC3: the override is for implementer mail alone.
-        box = self.folder / '.workbench' / 'inbox' / 'codex'
+        box = self.folder / '.wagflow' / 'inbox' / 'codex'
         box.mkdir(parents=True)
         (box / 'm1.md').write_text('---\nid: m1\nfrom: claude\nto: codex\nsubject: x\n---\nx\n', encoding='utf-8')
         lock = self.folder / '.git' / 'index.lock'
@@ -3328,7 +3328,7 @@ class AutonomousClose(unittest.TestCase):
     def test_a_pane_that_keeps_changing(self):
         texts = iter(f'{CLAUDE_IDLE}\n{i}' for i in range(10000))
         self.text[self.IMPLEMENTER] = None
-        agw.pane_text.side_effect = lambda pane: next(texts) if pane == self.IMPLEMENTER else self.text[pane]
+        wag.pane_text.side_effect = lambda pane: next(texts) if pane == self.IMPLEMENTER else self.text[pane]
         self.assertIn('codex pane changed', self.blocked())
 
     def test_a_draft_a_running_turn_or_a_git_lock(self):
@@ -3353,7 +3353,7 @@ class AutonomousClose(unittest.TestCase):
     def restart(self, saved):
         self.write('relay.json', dict({'branch': 'issue-7-fix', 'announced': [],
                                        'watch_since': '2026-09-24T16:00:00+00:00'}, **saved))
-        restarted = relay.Relay(self.folder / '.workbench', self.r.peers, 'o/repo', 'issue-7-fix', 5, 60)
+        restarted = relay.Relay(self.folder / '.wagflow', self.r.peers, 'o/repo', 'issue-7-fix', 5, 60)
         restarted.log = lambda text: None
         restarted.close_after_merge = Mock()
         restarted.stop_file = SimpleNamespace(exists=lambda: True)
@@ -3380,7 +3380,7 @@ class AutonomousClose(unittest.TestCase):
         # A Codex implementer has no waiter: unless the close wait rings it, it is never read.
         self.r.peers = [relay.Peer('claude', 'claude', self.PLANNER), relay.Peer('codex', 'codex', self.IMPLEMENTER)]
         self.text[self.IMPLEMENTER] = CODEX_IDLE
-        box = self.folder / '.workbench' / 'inbox' / 'codex'
+        box = self.folder / '.wagflow' / 'inbox' / 'codex'
         box.mkdir(parents=True)
         mail = box / 'm9.md'
         mail.write_text('---\nid: m9\nfrom: claude\nto: codex\nsubject: loop complete\n---\nbye\n', encoding='utf-8')
@@ -3430,9 +3430,9 @@ class AutonomousClose(unittest.TestCase):
                 self.actions.clear()
                 (self.state / 'relay-close.log').unlink(missing_ok=True)
                 for each in ('claude', 'codex'):
-                    for old in (self.folder / '.workbench' / 'inbox' / each).glob('*.md'):
+                    for old in (self.folder / '.wagflow' / 'inbox' / each).glob('*.md'):
                         old.unlink()
-                directory = self.folder / '.workbench' / 'inbox' / box
+                directory = self.folder / '.wagflow' / 'inbox' / box
                 directory.mkdir(parents=True, exist_ok=True)
                 (directory / 'h1.md').write_text(f'---\nid: h1\nfrom: {sender}\nto: {box}\nsubject: wait\n---\nx\n',
                                                  encoding='utf-8')
@@ -3450,7 +3450,7 @@ class AutonomousClose(unittest.TestCase):
 
     def test_a_failing_close_step_is_logged_and_alerted(self):
         # r18 m2
-        agw.close_session.side_effect = agw.CtlError('pipe gone')
+        wag.close_session.side_effect = wag.CtlError('pipe gone')
         self.r.state['close_pending'] = 7
         self.r.close_after_merge(7)
         self.assertIn('close failed: pipe gone', self.log())
@@ -3477,7 +3477,7 @@ class AutonomousClose(unittest.TestCase):
         self.r.close_after_merge(7)
         message = self.notify.call_args.args[1]
         self.assertTrue(message.startswith('autonomous close stopped:'), message)
-        self.assertNotIn('workbench mail for', message)
+        self.assertNotIn('wagflow mail for', message)
 
 
     # --- #41: the checkout cleanup after the close -------------------------------------------------
@@ -3518,13 +3518,13 @@ class AutonomousClose(unittest.TestCase):
             self.r.dry_run = True
 
         def issue_close_fails():
-            real = agw.close_session.side_effect
+            real = wag.close_session.side_effect
 
             def close(sid):
                 if sid == self.PLANNER:
-                    raise agw.CtlError('pipe gone')
+                    raise wag.CtlError('pipe gone')
                 real(sid)
-            agw.close_session.side_effect = close
+            wag.close_session.side_effect = close
         for name, arrange in (('autonomy off', autonomy_off), ('refused on timeout', not_done), ('dry run', dry_run),
                               ('issue session close failed', issue_close_fails)):
             with self.subTest(name):
@@ -3553,12 +3553,12 @@ class HelperSweep(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test relay sweep ' + uuid.uuid4().hex)
-        self.hub_dir = self.folder / '.workbench'
+        self.hub_dir = self.folder / '.wagflow'
         self.state = self.hub_dir / 'state'
         self.state.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
-        self.enterContext(patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(self.folder / 'config.json')}))
+        self.enterContext(patch.dict(os.environ, {'WAGFLOW_CONFIG': str(self.folder / 'config.json')}))
         self.config({})
         # Not autonomous: the early close does not depend on it.
         (self.state / 'implementer.json').write_text(json.dumps({'tool': 'claude', 'autonomous': False}), encoding='utf-8')
@@ -3577,11 +3577,11 @@ class HelperSweep(unittest.TestCase):
                                           {'id': self.REVIEW, 'name': '#7 your review'}]},
             {'name': 'other', 'sessions': [{'id': self.OTHER, 'name': '#7 revmux r1'}]}]}
         self.actions = []
-        self.enterContext(patch.object(agw, 'pane_text', side_effect=lambda pane: self.text[pane]))
-        self.enterContext(patch.object(agw, 'tree', side_effect=lambda: self.tree))
-        self.enterContext(patch.object(agw, 'close_session', side_effect=self.closed))
-        self.enterContext(patch.object(agw, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('unexpected terminal request')))
+        self.enterContext(patch.object(wag, 'pane_text', side_effect=lambda pane: self.text[pane]))
+        self.enterContext(patch.object(wag, 'tree', side_effect=lambda: self.tree))
+        self.enterContext(patch.object(wag, 'close_session', side_effect=self.closed))
+        self.enterContext(patch.object(wag, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('unexpected terminal request')))
         self.marker(self.SUITE, 'suite', self.SUITE_ROWS, mail='m-suite', to='claude')
         self.marker(self.REVMUX, 'revmux', self.REVMUX_ROWS, mail='m-revmux', to='claude')
         self.marker(self.REVIEW, 'review', ['revdiff: 3 annotations'])
@@ -3639,7 +3639,7 @@ class HelperSweep(unittest.TestCase):
         # The owner's rule: once the result is read the session goes, whatever the pane shows.
         self.tree['workspaces'][0]['sessions'][1]['foregroundShell'] = 'pwsh'
         self.text[self.SUITE] += '\nPS C:\\repo> still printing'
-        with patch.object(agw, 'pane_text', side_effect=AssertionError('the pane is not read')):
+        with patch.object(wag, 'pane_text', side_effect=AssertionError('the pane is not read')):
             self.sweep(0)
         self.assertEqual([self.SUITE, self.REVMUX], self.closes())
 
@@ -3818,8 +3818,8 @@ class HelperMarkers(unittest.TestCase):
         folder = Path(__file__).resolve().parent.parent / ('test helper done ' + uuid.uuid4().hex)
         folder.mkdir()
         self.addCleanup(shutil.rmtree, folder)
-        with patch.dict(os.environ, {'AGWINTERM_PANE_ID': 'p-1'}), \
-                patch.object(agw, 'pane_text', return_value='report\n\nposted\n'):
+        with patch.dict(os.environ, {'WAGTERM_PANE_ID': 'p-1'}), \
+                patch.object(wag, 'pane_text', return_value='report\n\nposted\n'):
             self.assertEqual(0, helper_done.main(['--hub', str(folder), '--kind', 'revmux', '--round', '2', '--exit', '1']))
         marker = json.loads((folder / 'state' / 'helpers' / 'p-1.done').read_text(encoding='utf-8'))
         self.assertEqual(('revmux', 2, 1, 'p-1', ['report', 'posted']),
@@ -3831,7 +3831,7 @@ class HelperMarkers(unittest.TestCase):
         folder = Path(__file__).resolve().parent.parent / ('test helper done ' + uuid.uuid4().hex)
         folder.mkdir()
         self.addCleanup(shutil.rmtree, folder)
-        with patch.dict(os.environ, {'AGWINTERM_PANE_ID': 'p-3'}), patch.object(agw, 'pane_text', return_value='x\n'):
+        with patch.dict(os.environ, {'WAGTERM_PANE_ID': 'p-3'}), patch.object(wag, 'pane_text', return_value='x\n'):
             helper_done.main(['--hub', str(folder), '--kind', 'revmux', '--mail', 'm-1', '--to', 'claude'])
             marker = json.loads((folder / 'state' / 'helpers' / 'p-3.done').read_text(encoding='utf-8'))
             self.assertEqual(('m-1', 'claude'), (marker['mail'], marker['to']))
@@ -3844,8 +3844,8 @@ class HelperMarkers(unittest.TestCase):
         folder = Path(__file__).resolve().parent.parent / ('test helper done ' + uuid.uuid4().hex)
         folder.mkdir()
         self.addCleanup(shutil.rmtree, folder)
-        with patch.dict(os.environ, {'AGWINTERM_PANE_ID': 'p-2'}), \
-                patch.object(agw, 'pane_text', side_effect=agw.CtlError('no pipe')), patch('sys.stderr'):
+        with patch.dict(os.environ, {'WAGTERM_PANE_ID': 'p-2'}), \
+                patch.object(wag, 'pane_text', side_effect=wag.CtlError('no pipe')), patch('sys.stderr'):
             helper_done.main(['--hub', str(folder), '--kind', 'review'])
         marker = json.loads((folder / 'state' / 'helpers' / 'p-2.done').read_text(encoding='utf-8'))
         self.assertEqual([], marker['rows'])

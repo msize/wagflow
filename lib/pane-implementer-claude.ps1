@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  The right pane with "implementer": "claude" - Claude Code as the implementer for this workbench.
+  The right pane with "implementer": "claude" - Claude Code as the implementer for this wagflow.
 
 .DESCRIPTION
   The sibling of pane-codex.ps1, for when Codex is out of quota. Launch policy, and why:
@@ -19,7 +19,7 @@
       spelled around a prefix rule, so the instructions still say never push. The list goes first,
       so the next option ends its variadic value list.
 
-  Extra arguments from "claudeArgs" in ~/.agworkbench.json pass through, as for the planner - so
+  Extra arguments from "claudeArgs" in ~/.wagflow.json pass through, as for the planner - so
   the human's --dangerously-skip-permissions opt-in applies here too - except anything that would
   re-decide the conversation identity or widen this pane's tool policy.
 #>
@@ -28,13 +28,13 @@ param([Parameter(Mandatory = $true)] [string] $Checkout,
       [switch] $WhatIfOnly)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
-$config = Get-WorkbenchConfig
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
+$config = Get-WagFlowConfig
 
 try { $identity = Read-ClaudeIdentity $Checkout $Issue 'implementer' }
 catch {
     Write-Host "Cannot start the Claude implementer: $($_.Exception.Message)"
-    Write-Host "Repair: github-workbench $(Quote $Issue)"
+    Write-Host "Repair: wagflow $(Quote $Issue)"
     exit 1
 }
 $claudeArgs = @(@($config.claudeArgs) | Where-Object { $_ })
@@ -52,18 +52,18 @@ $denied = @('Bash(git push:*)', 'Bash(gh:*)', 'PowerShell(git push:*)', 'PowerSh
 if (-not $config.allowNetwork) { $denied += @('WebFetch', 'WebSearch') }
 $policy = @('--disallowedTools') + $denied
 $quietSettings = Get-ClaudeQuietSettings $Checkout
-$quiet = @('--settings', $quietSettings)          # #33: no greyed prompt suggestions (see Workbench.ps1)
+$quiet = @('--settings', $quietSettings)          # #33: no greyed prompt suggestions (see WagFlow.Common.ps1)
 
 $transcript = Get-ClaudeTranscript $identity.sessionId
 if ($transcript) {
     $resumePrompt = @"
-You were resumed after an agwinterm restart. You are still the IMPLEMENTER, in the RIGHT pane for $Issue.
-Follow /workbench-implementer. Start one background wb.py wait-mail --box codex waiter, read any unread
-workbench mail, and continue the step you were in (implementing, or fixing review findings).
+You were resumed after a WagTerm restart. You are still the IMPLEMENTER, in the RIGHT pane for $Issue.
+Follow /wagflow-implementer. Start one background wb.py wait-mail --box codex waiter, read any unread
+wagflow mail, and continue the step you were in (implementing, or fixing review findings).
 "@
     $modeArgs = @('--resume', $identity.sessionId, $resumePrompt)
 }
-else { $modeArgs = @('--session-id', $identity.sessionId, "/workbench-implementer $Issue") }
+else { $modeArgs = @('--session-id', $identity.sessionId, "/wagflow-implementer $Issue") }
 if ($WhatIfOnly) {
     Write-Host "would cd: $($identity.cwd)"
     Write-Host 'would set: CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false'
@@ -71,8 +71,8 @@ if ($WhatIfOnly) {
     return
 }
 
-$env:AGWORKBENCH = $script:Root
-$env:AI_HUB = Join-Path $Checkout '.workbench'
+$env:WAGFLOW = $script:Root
+$env:AI_HUB = Join-Path $Checkout '.wagflow'
 $env:AI_BOX = 'codex'
 $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'
 Write-ClaudeQuietSettings $quietSettings
@@ -82,5 +82,5 @@ $registry = Join-Path $env:AI_HUB 'state\agents.json'
 $deadline = (Get-Date).AddSeconds(60)
 while (-not (Test-Path -LiteralPath $registry) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
 
-Write-Host "agworkbench: Claude implementer for $Issue in $Checkout - denied: $($denied -join ', ')" -ForegroundColor DarkGray
+Write-Host "WagFlow: Claude implementer for $Issue in $Checkout - denied: $($denied -join ', ')" -ForegroundColor DarkGray
 & claude @policy @claudeArgs @quiet @modeArgs

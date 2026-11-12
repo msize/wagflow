@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-  The left pane: Claude Code, started on /start-github-issue for this workbench.
+  The left pane: Claude Code, started on /wagflow-start for this WagFlow.
 #>
 param([Parameter(Mandatory = $true)] [string] $Checkout,
       [Parameter(Mandatory = $true)] [string] $Issue,
       [switch] $WhatIfOnly)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
-$config = Get-WorkbenchConfig
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
+$config = Get-WagFlowConfig
 
 try { $identity = Read-ClaudeIdentity $Checkout $Issue }
 catch {
     Write-Host "Cannot start Claude: $($_.Exception.Message)"
-    Write-Host "Repair: github-workbench $(Quote $Issue)"
+    Write-Host "Repair: wagflow $(Quote $Issue)"
     exit 1
 }
 $claudeArgs = @(@($config.claudeArgs) | Where-Object { $_ })
@@ -22,7 +22,7 @@ foreach ($argument in $claudeArgs) {
         throw "claudeArgs: '$argument' would override the conversation identity or launch mode"
     }
     if ($argument -match '^--settings(=|$)') {
-        throw "claudeArgs: '$argument' would replace the workbench's own --settings (#33); put your settings in ~/.claude/settings.json instead"
+        throw "claudeArgs: '$argument' would replace the WagFlow's own --settings (#33); put your settings in ~/.claude/settings.json instead"
     }
 }
 $quietSettings = Get-ClaudeQuietSettings $Checkout
@@ -30,13 +30,13 @@ $quiet = @('--settings', $quietSettings)
 $transcript = Get-ClaudeTranscript $identity.sessionId
 if ($transcript) {
     $resumePrompt = @"
-You were resumed after an agwinterm restart in the Claude pane for $Issue.
-Start one background wb.py wait-mail waiter, following The channel rule. Read any unread workbench
+You were resumed after a WagTerm restart in the Claude pane for $Issue.
+Start one background wb.py wait-mail waiter, following The channel rule. Read any unread wagflow
 mail and continue the phase you were in.
 "@
     $modeArgs = @('--resume', $identity.sessionId, $resumePrompt)
 }
-else { $modeArgs = @('--session-id', $identity.sessionId, "/start-github-issue $Issue") }
+else { $modeArgs = @('--session-id', $identity.sessionId, "/wagflow-start $Issue") }
 if ($WhatIfOnly) {
     Write-Host "would cd: $($identity.cwd)"
     Write-Host 'would set: CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false'
@@ -44,8 +44,8 @@ if ($WhatIfOnly) {
     return
 }
 
-$env:AGWORKBENCH = $script:Root
-$env:AI_HUB = Join-Path $Checkout '.workbench'
+$env:WAGFLOW = $script:Root
+$env:AI_HUB = Join-Path $Checkout '.wagflow'
 $env:AI_BOX = 'claude'
 $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'
 Write-ClaudeQuietSettings $quietSettings
@@ -57,5 +57,5 @@ $registry = Join-Path $env:AI_HUB 'state\agents.json'
 $deadline = (Get-Date).AddSeconds(60)
 while (-not (Test-Path -LiteralPath $registry) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
 
-Write-Host "agworkbench: Claude for $Issue in $Checkout" -ForegroundColor DarkGray
+Write-Host "WagFlow: Claude for $Issue in $Checkout" -ForegroundColor DarkGray
 & claude @claudeArgs @quiet @modeArgs

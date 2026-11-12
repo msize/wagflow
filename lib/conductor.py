@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-import agw
+import wag
 import closer
 import labelquery
 import triage
@@ -125,7 +125,7 @@ def repo_name(value):
 
 # --- named queues (#66) ------------------------------------------------------------------------
 # A repo's main queue is `<owner>/<repo>.json`; a named one `<owner>/<repo>.<name>.json`, with its own
-# agwinterm workspace (default `<repo>-<name>`) and checkouts `<repo>-<name>-issue-N`. Repo names may
+# wagterm workspace (default `<repo>-<name>`) and checkouts `<repo>-<name>-issue-N`. Repo names may
 # contain dots, so a file name alone never says whose queue it is: the recorded repo and name do.
 
 QUEUE_NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,31}')
@@ -159,7 +159,7 @@ def queue_label(data):
 
 
 def queue_workspace(data):
-    """The agwinterm workspace of the queue's sessions: its own for a named queue, else the repo's name."""
+    """The wagterm workspace of the queue's sessions: its own for a named queue, else the repo's name."""
     return data.get('workspace') or data['repo'].split('/')[1]
 
 
@@ -230,7 +230,7 @@ def live_closed(repo, siblings, fresh, tree=None):
                                          for m in d['members'])]
     if not wanted:
         return {}
-    tree = agw.tree() if tree is None else tree
+    tree = wag.tree() if tree is None else tree
     return {queue_workspace(d).casefold(): session_numbers(repo, tree, [queue_workspace(d)]) for d in wanted}
 
 
@@ -376,7 +376,7 @@ HELPER_SESSION = re.compile(r'#\d+ (relay|revmux r\d+|your review)')
 
 def pr_reasons(repo, numbers, gh=gh_json):
     """{number: reason} for issues with an OPEN pull request: one that will close it (GitHub's
-    closing references), or one on the workbench's own `issue-<N>-*` branch in this repo."""
+    closing references), or one on the WagFlow's own `issue-<N>-*` branch in this repo."""
     reasons = {}
     pages = gh('api', f'repos/{repo}/pulls?state=open&per_page=100', '--paginate', '--slurp')
     wanted = set(numbers)
@@ -409,7 +409,7 @@ def session_numbers(repo, tree, workspaces=None):
     by default the repo's own workspace (#66: a named queue's members live in the queue's)."""
     wanted = {w.casefold() for w in (workspaces or [repo.split('/')[1]])}
     numbers = set()
-    for workspace, session in agw.sessions(tree):
+    for workspace, session in wag.sessions(tree):
         if (workspace.get('name') or '').casefold() not in wanted:
             continue
         match = re.match(r'#(\d+) ', session.get('name') or '')
@@ -420,7 +420,7 @@ def session_numbers(repo, tree, workspaces=None):
 
 def skip_reasons(numbers, repo, root, queue_path, prs, sessions, name=None):
     """{number: reason} for issues someone is already handling, from the given PR and session
-    lookups plus the checkouts on disk (a held launch.lock, a foreign .workbench). A named queue
+    lookups plus the checkouts on disk (a held launch.lock, a foreign .wagflow). A named queue
     (#66) checks its own checkout and the repo's plain `<repo>-issue-N` one, which a manual launch
     or the main queue uses."""
     reasons = {}
@@ -433,14 +433,14 @@ def skip_reasons(numbers, repo, root, queue_path, prs, sessions, name=None):
         if n in prs:
             reasons[n] = prs[n]
         elif n in sessions:
-            reasons[n] = 'session: a live workbench session is open for it'
+            reasons[n] = 'session: a live WagFlow session is open for it'
         elif reason:
             reasons[n] = reason
     return reasons
 
 
 def checkout_reason(checkout, repo, n, queue_path, name=None):
-    state = checkout / '.workbench' / 'state'
+    state = checkout / '.wagflow' / 'state'
     membership = state / 'queue-member.json'
     if checkout_locked(checkout):
         return 'checkout-lock: a launcher holds its checkout'
@@ -454,9 +454,9 @@ def checkout_reason(checkout, repo, n, queue_path, name=None):
                 # A named checkout without this queue's membership cannot be resumed by one (#66 r2 m3).
                 return (f'checkout exists without a queue membership this queue can use ({checkout}); '
                         f'delete it (a member of this queue is relaunched with '
-                        f'github-workbench -Queue <spec> -QueueName {name} -Retry)')
+                        f'wagflow -Queue <spec> -QueueName {name} -Retry)')
             return (f'checkout exists from an earlier loop ({checkout}); resume with '
-                    f'github-workbench {repo}#{n} or delete it')
+                    f'wagflow {repo}#{n} or delete it')
     return None
 
 
@@ -506,12 +506,12 @@ def watched_spec(data):
 
 
 def config_path():
-    return Path(os.environ.get('AGWORKBENCH_CONFIG', Path.home() / '.agworkbench.json')).resolve()
+    return Path(os.environ.get('WAGFLOW_CONFIG', Path.home() / '.wagflow.json')).resolve()
 
 
 def checkout_root(config):
     settings = read_json(config) if Path(config).exists() else {}
-    return Path(settings.get('checkoutRoot', Path.home() / 'source/workbench')).expanduser().resolve()
+    return Path(settings.get('checkoutRoot', Path.home() / 'source/wagflow')).expanduser().resolve()
 
 
 GIB = 1024 ** 3                 # minFreeGB counts what Explorer labels "GB" (#41)
@@ -599,7 +599,7 @@ def member_limits(m):
     """The usage limits a member's checkout recorded (#61): [(tool, at, line, kind)]. The launcher's
     implementer.json `limits` (what -Failover switched away from) and the relay's announced episodes
     (the tool comes from the episode, whichever box it is in)."""
-    directory = Path(m['checkout']) / '.workbench/state'
+    directory = Path(m['checkout']) / '.wagflow/state'
     found = []
     path = directory / 'implementer.json'
     if path.exists():
@@ -620,7 +620,7 @@ def member_limits(m):
 
 def relay_limited(m):
     """Whether the member's relay has announced a usage-limit episode (#61): its block is environmental."""
-    path = Path(m['checkout']) / '.workbench/state/relay.json'
+    path = Path(m['checkout']) / '.wagflow/state/relay.json'
     if not path.exists():
         return False
     episodes = read_json(path).get('limits') or {}
@@ -633,7 +633,7 @@ def limit_wait(m, now):
     when it waits for nothing. Times are epoch seconds, None when unreadable. A relay episode ends only
     when the pane clears; a review wait past its retryAt is over - the rerun holds its own slot, and a
     file nobody cleaned up must not pin the queue."""
-    directory = Path(m['checkout']) / '.workbench/state'
+    directory = Path(m['checkout']) / '.wagflow/state'
     path = directory / 'relay.json'
     if path.exists():
         for box, episode in sorted((read_json(path).get('limits') or {}).items()):
@@ -866,9 +866,9 @@ def conductor_command(store, token):
 def pin_conductor(store, owner):
     session, token = owner['session'], owner['token']
     line = conductor_command(store, token)
-    reply = agw.request('session.restore', target=session, args={'command': line})
+    reply = wag.request('session.restore', target=session, args={'command': line})
     if not isinstance(reply, dict) or reply.get('action') != 'pinned' or reply.get('pane') != session or reply.get('command') != line:
-        raise QueueError(f'conductor pin failed; repair: agwintermctl session restore {command_line([line]).strip()} --target {session}')
+        raise QueueError(f'conductor pin failed; repair: wagtermctl session restore {command_line([line]).strip()} --target {session}')
     with store.transaction() as data:
         if data['owner']['token'] == token and data['owner'].get('session') == session:
             data['owner']['pinned'] = True
@@ -933,7 +933,7 @@ def start_queue(spec, repo=None, parallel=None, watch=False, retry=False, yes=Fa
         raise UsageError(f'invalid workspace name {workspace!r}')
     if triage_on and name is not None:
         raise UsageError('a named queue does not triage; triage is the repo-wide '
-                         'github-workbench -Triage -Repo <owner/name> -Watch')
+                         'wagflow -Triage -Repo <owner/name> -Watch')
     if revmux_profile is not None and not REVMUX_PROFILE.fullmatch(revmux_profile):
         raise UsageError(f'invalid revmux profile {revmux_profile!r}')
     repo, numbers, label = resolve_spec(expand_spec(spec, config_path()), repo, gh)
@@ -943,7 +943,7 @@ def start_queue(spec, repo=None, parallel=None, watch=False, retry=False, yes=Fa
         raise UsageError('-Watch requires a label:, bugs or where: spec')
     if prune and (not watch or not label):
         raise UsageError('-Prune requires -Queue with a watched label:, bugs or where: spec')
-    root = Path(root or os.environ.get('AGWORKBENCH_QUEUE_ROOT', Path.home() / '.agworkbench/queues')).resolve()
+    root = Path(root or os.environ.get('WAGFLOW_QUEUE_ROOT', Path.home() / '.wagflow/queues')).resolve()
     store = Store(queue_path(root, repo, name))
     if parallel is not None and not 1 <= parallel <= 8:
         raise UsageError('-Parallel must be between 1 and 8')
@@ -1067,7 +1067,7 @@ def start_queue(spec, repo=None, parallel=None, watch=False, retry=False, yes=Fa
         # A named queue's conductor lives in its workspace (#66), created when missing; the main
         # queue's opens beside its caller, as before.
         args.update({'workspace-name': workspace, 'create-workspace': True})
-    session = str(agw.request('session.new', args=args)).split()[0]
+    session = str(wag.request('session.new', args=args)).split()[0]
     if not valid_uuid(session):
         raise QueueError(f'invalid conductor session id: {session}')
     with store.transaction() as data:
@@ -1127,13 +1127,13 @@ def write_loop_state(root, state, pr=None, reason=None, *, loop_id=None, cause=N
     if cause not in (None, 'environment') or (cause and state != 'blocked'):
         raise QueueError('only a blocked report can have an environmental cause')
     root = Path(root)
-    directory = root / '.workbench/state'
+    directory = root / '.wagflow/state'
     member = read_json(directory / 'queue-member.json')
     identity = read_json(directory / 'claude.json')
     if loop_id is None:
         loop_id = os.environ.get('CLAUDE_CODE_SESSION_ID')
     if not valid_uuid(loop_id) or identity['sessionId'] != loop_id:
-        raise QueueError('Claude runtime identity does not match this workbench')
+        raise QueueError('Claude runtime identity does not match this wagflow')
     repo = repo_name(member['repo'])
     if state == 'pr-open':
         pr_url(pr, repo)
@@ -1154,7 +1154,7 @@ def write_loop_state(root, state, pr=None, reason=None, *, loop_id=None, cause=N
 
 
 def apply_loop(data, member, path):
-    directory = Path(member['checkout']) / '.workbench/state'
+    directory = Path(member['checkout']) / '.wagflow/state'
     report_path = directory / 'loop.json'
     if not report_path.exists():
         return False
@@ -1216,7 +1216,7 @@ def adopt_done(data, member):
     """Recover a current attempt's PR when the planner skipped its queue report."""
     if member['state'] not in {'active', 'blocked'} or member.get('pr'):
         return False
-    path = Path(member['checkout']) / '.workbench/state/loop-done.json'
+    path = Path(member['checkout']) / '.wagflow/state/loop-done.json'
     if not path.exists():
         return False
     done = read_json(path)
@@ -1235,7 +1235,7 @@ def adopt_done(data, member):
 
 def summary(data):
     lines = [f'Queue {queue_label(data)} — snapshot at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())}',
-             'Rerun github-workbench -Queue <spec> to refresh.', '', '| Issue | State | PR | Reason |', '|---|---|---|---|']
+             'Rerun wagflow -Queue <spec> to refresh.', '', '| Issue | State | PR | Reason |', '|---|---|---|---|']
     for m in data['members']:
         state = m['state'] + (' (PR closed)' if m.get('prState') == 'CLOSED' else '')
         if m.get('limitWait'):
@@ -1284,7 +1284,7 @@ class Worker:
 
     def cleanup_launch(self, checkout, token=None):
         """Close only sessions recorded as created by an interrupted queue launch."""
-        path = Path(checkout) / '.workbench' / 'state' / 'queue-launch.json'
+        path = Path(checkout) / '.wagflow' / 'state' / 'queue-launch.json'
         if not path.exists():
             return
         try:
@@ -1292,29 +1292,29 @@ class Worker:
             if token is not None and record.get('token') != token:
                 return
             sessions = record.get('sessions', [])
-            before = agw.tree()
+            before = wag.tree()
             for session_id in sessions:
-                found = agw.find_session(session_id, before)
+                found = wag.find_session(session_id, before)
                 if not found:
                     continue
                 _, session = found
-                for pane in agw.panes_of(session):
+                for pane in wag.panes_of(session):
                     try:
-                        agw.clear_restore(pane)
-                    except (agw.CtlError, OSError) as err:
+                        wag.clear_restore(pane)
+                    except (wag.CtlError, OSError) as err:
                         self.error(f'cleanup restore {pane}', err)
                 try:
-                    agw.close_session(session_id)
-                except (agw.CtlError, OSError) as err:
+                    wag.close_session(session_id)
+                except (wag.CtlError, OSError) as err:
                     self.error(f'cleanup session {session_id}', err)
-            after = agw.tree()
-            still = {s['id'] for _, s in agw.sessions(after)}
+            after = wag.tree()
+            still = {s['id'] for _, s in wag.sessions(after)}
             record['sessions'] = [sid for sid in sessions if sid in still]
             if record['sessions']:
                 atomic_json(path, record)
             else:
                 path.unlink(missing_ok=True)
-        except (OSError, ValueError, KeyError, TypeError, agw.CtlError) as err:
+        except (OSError, ValueError, KeyError, TypeError, wag.CtlError) as err:
             self.error(f'cleanup launch {checkout}', err)
 
     @property
@@ -1329,19 +1329,19 @@ class Worker:
 
     def notify(self, message):
         try:
-            agw.notify(agw.my_pane() or 'active', message, title=f'Workbench queue {self.tag}'.strip())
-        except (agw.CtlError, OSError) as err:
+            wag.notify(wag.my_pane() or 'active', message, title=f'WagFlow queue {self.tag}'.strip())
+        except (wag.CtlError, OSError) as err:
             print(f'notification failed: {err}', flush=True)
 
     def spawn_launcher(self, data, m):
         output = self.store.directory / f'launch-{m["number"]}-{m["attempt"]}.log'
         stream = open(output, 'wb')
-        env = dict(os.environ, AGWORKBENCH_CONFIG=data['config'])
+        env = dict(os.environ, WAGFLOW_CONFIG=data['config'])
         shell = shutil.which('pwsh') or shutil.which('powershell.exe')
         if not shell:
             stream.close()
             raise QueueError('PowerShell is not installed')
-        args = [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(HERE / 'github-workbench.ps1'),
+        args = [shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(HERE / 'wagflow.ps1'),
                 f'{data["repo"]}#{m["number"]}', '-NewSession', '-QueueMember', str(self.store.path),
                 '-QueueAttempt', str(m['attempt']), '-QueueToken', m['token']]
         if data['yes']:
@@ -1446,7 +1446,7 @@ class Worker:
                             print(f'{self.tag}#{n} skipped: {reason}', flush=True)
                     self.last_skips = skipped
                 self.errors.pop('label scan', None)
-            except (OSError, ValueError, KeyError, subprocess.SubprocessError, QueueError, agw.CtlError) as err:
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError, QueueError, wag.CtlError) as err:
                 self.error('label scan', err)
 
     def refresh_stale(self, data):
@@ -1459,8 +1459,8 @@ class Worker:
             return
         try:
             import cleanup
-            tree = agw.tree()
-        except (OSError, ValueError, KeyError, TypeError, agw.CtlError) as err:
+            tree = wag.tree()
+        except (OSError, ValueError, KeyError, TypeError, wag.CtlError) as err:
             self.error('stale sessions', err)
             return
         for m in candidates:
@@ -1484,7 +1484,7 @@ class Worker:
                 if now - gone < 1800:
                     continue
                 checkout = Path(m['checkout'])
-                relay = checkout / '.workbench/state/relay.json'
+                relay = checkout / '.wagflow/state/relay.json'
                 saved = read_json(relay) if relay.exists() else {}
                 branch = saved.get('branch', '') if isinstance(saved, dict) else ''
                 if not branch:
@@ -1512,7 +1512,7 @@ class Worker:
                 if issue is not None and (not isinstance(issue, dict) or issue.get('state') not in {'OPEN', 'CLOSED'}):
                     raise QueueError('invalid issue response')
                 # The original snapshot may predate a newly opened review/helper session.
-                if cleanup.live_sessions(data['repo'], m['number'], agw.tree(), queue_workspace(data)):
+                if cleanup.live_sessions(data['repo'], m['number'], wag.tree(), queue_workspace(data)):
                     with self.store.transaction() as current:
                         member = find_member(current, m['number'])
                         if member and member['state'] == 'active':
@@ -1530,7 +1530,7 @@ class Worker:
                         member.update(state='closed', phase='closed', slotReleased=True,
                                       reason='stale: issue closed and no session remains')
                 self.errors.pop(key, None)
-            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, agw.CtlError) as err:
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, wag.CtlError) as err:
                 self.error(key, err)
 
     # --- priorities (#34) ----------------------------------------------------------------------------
@@ -1573,7 +1573,7 @@ class Worker:
         try:
             process = subprocess.Popen([sys.executable, str(HERE / 'triage.py'), 'run', '--repo', data['repo'],
                                         '--issue', str(m['number']), '--result-file', str(result)],
-                                       cwd=HERE.parent, env=dict(os.environ, AGWORKBENCH_CONFIG=data['config']),
+                                       cwd=HERE.parent, env=dict(os.environ, WAGFLOW_CONFIG=data['config']),
                                        stdout=stream, stderr=subprocess.STDOUT)
         except BaseException:
             stream.close()
@@ -1652,7 +1652,7 @@ class Worker:
             number = m['number']
             key = close_key(m)
             pr = closer.pending_number(key)
-            hub_dir = Path(m['checkout']) / '.workbench'
+            hub_dir = Path(m['checkout']) / '.wagflow'
             try:
                 relay_state = read_json(hub_dir / 'state' / 'relay.json') if (hub_dir / 'state' / 'relay.json').exists() else {}
             except (OSError, ValueError):
@@ -1665,13 +1665,13 @@ class Worker:
                     if (isinstance(done, dict) and done.get('noPr') is True and done.get('pr') is None
                             and str(done.get('issue')) == str(number) and type(last) in (int, float)
                             and type(at) in (int, float)
-                            and at > last and not closer.relay_alive(data['repo'], str(number), agw.tree(),
+                            and at > last and not closer.relay_alive(data['repo'], str(number), wag.tree(),
                                                                     queue_workspace(data))):
                         relay_state['close_pending'] = closer.NO_PR
                         relay_state['close_merged_at'] = datetime.fromtimestamp(at, timezone.utc).isoformat()
                         atomic_json(hub_dir / 'state' / 'relay.json', relay_state)
                         self.mark(number, closePending=True, closeStuck=None)
-                except (OSError, ValueError, OverflowError, agw.CtlError):
+                except (OSError, ValueError, OverflowError, wag.CtlError):
                     pass  # An unreadable record or relay state is never a reason to re-arm.
             if key is None or relay_state.get('close_pending') != key:
                 # Nothing pending: the relay closed (or refused), or autonomy was off. A "relay alive"
@@ -1688,13 +1688,13 @@ class Worker:
                 continue
             try:
                 self.step_close(data, m, pr, hub_dir, watch)
-            except (agw.CtlError, OSError, ValueError, KeyError) as err:
+            except (wag.CtlError, OSError, ValueError, KeyError) as err:
                 self.error(f'close #{number}', err)
 
     def step_close(self, data, m, pr, hub_dir, watch):
         number = m['number']
         # Every tick: a relay that came back owns the close again, and this attempt is dropped.
-        if closer.relay_alive(data['repo'], str(number), agw.tree(), queue_workspace(data)):
+        if closer.relay_alive(data['repo'], str(number), wag.tree(), queue_workspace(data)):
             if watch['attempt'] is not None:
                 watch['attempt'].log('the relay is back; the conductor leaves the close to it')
                 watch['attempt'] = None
@@ -1844,9 +1844,9 @@ class Worker:
         if self.tick_sessions is _UNREAD:
             try:
                 # Only this queue's workspace (#66): its own members' sessions, and no sibling is read.
-                self.tick_sessions = session_numbers(data['repo'], agw.tree(), [queue_workspace(data)])
+                self.tick_sessions = session_numbers(data['repo'], wag.tree(), [queue_workspace(data)])
                 self.errors.pop('live sessions', None)
-            except (OSError, ValueError, KeyError, TypeError, agw.CtlError) as err:
+            except (OSError, ValueError, KeyError, TypeError, wag.CtlError) as err:
                 self.error('live sessions', err)
                 self.tick_sessions = None
         return self.tick_sessions
@@ -2158,7 +2158,7 @@ class Worker:
                         with self.store.transaction() as data:
                             if data['owner']['token'] != self.token:
                                 return 0
-                            data['owner'].update(state='running', session=agw.my_pane() or data['owner'].get('session'))
+                            data['owner'].update(state='running', session=wag.my_pane() or data['owner'].get('session'))
                         initialized = True
                         self.status('active')
                     self.tick()
@@ -2192,13 +2192,13 @@ class Worker:
 
     def status(self, value):
         try:
-            agw.set_status(value)
-        except (OSError, agw.CtlError) as err:
+            wag.set_status(value)
+        except (OSError, wag.CtlError) as err:
             print(f'status unavailable: {err}', flush=True)
 
 
 def checkout_locked(checkout):
-    return file_locked(checkout / '.workbench/state/launch.lock')
+    return file_locked(checkout / '.wagflow/state/launch.lock')
 
 
 def file_locked(path):
@@ -2223,7 +2223,7 @@ def handed_off(m):
     if pr is None:
         return False
     try:
-        state = read_json(Path(m['checkout']) / '.workbench' / 'state' / 'relay.json')
+        state = read_json(Path(m['checkout']) / '.wagflow' / 'state' / 'relay.json')
     except (OSError, ValueError):
         return False
     return (isinstance(state, dict) and state.get('close_pending') == pr
@@ -2252,7 +2252,7 @@ def main(argv=None):
     start = sub.add_parser('start')
     source = start.add_mutually_exclusive_group(required=True)
     source.add_argument('--spec')
-    # The launcher passes the spec in AGWORKBENCH_QUEUE_SPEC: Windows PowerShell 5.1 strips the double
+    # The launcher passes the spec in WAGFLOW_QUEUE_SPEC: Windows PowerShell 5.1 strips the double
     # quotes out of a native argument, which would change a quoted label in a query (#38).
     source.add_argument('--spec-env', action='store_true')
     start.add_argument('--repo')
@@ -2261,7 +2261,7 @@ def main(argv=None):
         start.add_argument('--' + flag, action='store_true')
     start.add_argument('--implementer', choices=IMPLEMENTER_TOOLS)
     start.add_argument('--name', help='a named queue of the repo (#66); omitted: the main queue')
-    start.add_argument('--workspace', help="the named queue's agwinterm workspace (#66)")
+    start.add_argument('--workspace', help="the named queue's wagterm workspace (#66)")
     start.add_argument('--revmux-profile', help="the queue's revmux profile, passed to every member launch (#66)")
     start.add_argument('--clear-limit', choices=IMPLEMENTER_TOOLS,
                        help="forget the queue's recorded usage limit of this tool (#61)")
@@ -2307,13 +2307,13 @@ def main(argv=None):
             sys.stderr.buffer.write(done.stderr)
             return done.returncode
         if args.command == 'start':
-            if os.environ.get('AGWINTERM_ENABLED') != '1' or not os.environ.get('AGWINTERM_SESSION_ID'):
-                raise UsageError('queue mode requires running inside agwinterm')
+            if os.environ.get('WAGTERM_ENABLED') != '1' or not os.environ.get('WAGTERM_SESSION_ID'):
+                raise UsageError('queue mode requires running inside wagterm')
             spec = args.spec
             if args.spec_env:
-                spec = os.environ.get('AGWORKBENCH_QUEUE_SPEC', '')
+                spec = os.environ.get('WAGFLOW_QUEUE_SPEC', '')
                 if not spec.strip():
-                    raise UsageError('--spec-env: AGWORKBENCH_QUEUE_SPEC is empty')
+                    raise UsageError('--spec-env: WAGFLOW_QUEUE_SPEC is empty')
             return start_queue(spec, args.repo, args.parallel, args.watch, args.retry, args.yes, args.dry_run,
                                implementer=args.implementer, auto_merge=args.auto_merge,
                                autonomous=args.autonomous, triage_on=args.triage, prune=args.prune,
@@ -2333,7 +2333,7 @@ def main(argv=None):
             if not member_result(args.file, args.number, args.attempt, args.token, read_json(args.result_file)):
                 return 3
         return 0
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, agw.CtlError) as err:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, wag.CtlError) as err:
         print(f'queue: {err}', file=sys.stderr)
         return 2 if isinstance(err, UsageError) else 1
 

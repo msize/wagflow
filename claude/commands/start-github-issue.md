@@ -1,11 +1,11 @@
 ---
-description: Work a GitHub issue end to end in the agworkbench two-pane loop - agree a plan with Codex, Codex implements, you review with revmux, the human reviews with revdiff and merges.
+description: Work a GitHub issue end to end in the WagFlow two-pane loop - agree a plan with Codex, Codex implements, you review with revmux, the human reviews with revdiff and merges.
 argument-hint: <owner/repo#number | number | issue URL>
 ---
 
 # Start GitHub issue: $ARGUMENTS
 
-You are **Claude**, in the **left pane** of an agworkbench session. **Codex** is in the right pane.
+You are **Claude**, in the **left pane** of a WagFlow session. **Codex** is in the right pane.
 The layout is umputun's agterm `two-agent-chat` recipe on Windows. Its whole point is
 disagreement: an agent alone accepts its own reasoning; a second one with its own context attacks
 it first, and what comes back is a located disagreement or a checked fact.
@@ -25,7 +25,7 @@ no-op issue, use the "Nothing to change" path below once GitHub reports the issu
 with this line:
 
 ```
-<!-- agworkbench:planner -->
+<!-- wagflow:planner -->
 ```
 
 You post with the human's own account, so GitHub cannot tell your words from theirs. The marker is
@@ -49,7 +49,7 @@ all stop you exactly as they do without autonomy.
   follow-up URL, and every disputed or deferred finding with its severity. It marks each duplicate
   (an item with `duplicateOf` in follow-ups.json) as "reported
   again on #M" rather than as a new issue.
-- **Your last act** is `python "$AGWORKBENCH/lib/wb.py" loop-state done --pr <P> --sha <merged sha>` after the
+- **Your last act** is `python "$WAGFLOW/lib/wb.py" loop-state done --pr <P> --sha <merged sha>` after the
   Phase 7 merge steps, or `loop-state done --no-pr --reason "<why>"` after the no-op path has closed
   the issue. It refuses while any follow-up is unfiled. The relay closes nothing until this
   record exists and your own inbox is read. Mail the implementer gets after the merge or no-PR done record, such as your
@@ -59,7 +59,7 @@ all stop you exactly as they do without autonomy.
   - this issue's session;
   - itself.
 
-  It logs every step to `.workbench/state/relay-close.log`, and never closes on a timeout alone:
+  It logs every step to `.wagflow/state/relay-close.log`, and never closes on a timeout alone:
   only unread implementer mail is overridden after the wait.
 
 ## Follow-ups
@@ -71,7 +71,7 @@ Follow-ups are recorded as you go, and filed before the merge. For every finding
 (under autonomy) for every "Out of scope" or "Follow-up" item in the agreed plan, record one item:
 
 ```bash
-python "$AGWORKBENCH/lib/wb.py" follow-up add --key r2-m1 --title "<issue title>" --body-file <evidence.md> \
+python "$WAGFLOW/lib/wb.py" follow-up add --key r2-m1 --title "<issue title>" --body-file <evidence.md> \
     --severity minor --origin "review r2"          # add --disputed for a finding that ended disputed
 ```
 
@@ -84,7 +84,7 @@ explicitly add `--own-issue` for a planned out-of-scope feature the spec needs, 
 severity. A deferred review point is still recorded with `follow-up add` before filing.
 **File them as soon as the PR exists** - right after `gh pr create` (Phase 5), and again right after
 recording any later one - and in any case before merge-check, with
-`python "$AGWORKBENCH/lib/wb.py" follow-up file --source <N> --pr <P>` (`--pr is required` while `followUp.dedupe` is on, the default). It labels a new issue `follow-up`
+`python "$WAGFLOW/lib/wb.py" follow-up file --source <N> --pr <P>` (`--pr is required` while `followUp.dedupe` is on, the default). It labels a new issue `follow-up`
 (`follow-up-nested` when this issue is itself a follow-up) and adds the planner marker. With dedupe on
 (#42) it first looks for an existing issue describing the same problem: the same normalised title
 among the follow-up issues, or an unchecked checklist line in an open, trusted leftovers issue,
@@ -98,8 +98,8 @@ never downward; an untriaged issue gets no label below P1. merge-check refuses w
 ## When the implementer is Claude or Kimi
 
 The right pane may run **Claude Code** or **Kimi Code** instead of Codex (`implementer: "claude"` or
-`"kimi"` in `~/.agworkbench.json`, or `github-workbench -Implementer claude|kimi`, e.g. when Codex is
-out of quota). `.workbench/state/implementer.json` says which. Everything below still says "Codex"
+`"kimi"` in `~/.wagflow.json`, or `wagflow -Implementer claude|kimi`, e.g. when Codex is
+out of quota). `.wagflow/state/implementer.json` says which. Everything below still says "Codex"
 for the implementer: its mailbox box stays `codex`, the relay rings it the same way, and the loop is
 the same. The differences:
 
@@ -108,11 +108,11 @@ the same. The differences:
   when it reports that it cannot commit (Codex's sandbox can deny writes to `.git`) do you commit
   on its behalf, with its co-author trailer. It never pushes: pushing and GitHub stay yours.
 - It has the network, but the launcher denies it `git push` and `gh` (through both its Bash and
-  PowerShell tools) and, unless `allowNetwork` is set, the web tools. It still reads the issue from `.workbench/issue.md`.
+  PowerShell tools) and, unless `allowNetwork` is set, the web tools. It still reads the issue from `.wagflow/issue.md`.
 - `wb.py revmux` defaults to the `claude-only` revmux profile, so a review round does not depend on
-  Codex's quota (a `revmuxProfile` key in `~/.agworkbench.json` overrides it).
+  Codex's quota (a `revmuxProfile` key in `~/.wagflow.json` overrides it).
 - **Kimi** (#65) has no waiter: like Codex, it ends its turn after it sends, and the relay's
-  `Chat from Workbench:` line wakes it. Its role is `.kimi-code/AGENTS.md` in the clone (the
+  `Chat from WagFlow:` line wakes it. Its role is `.kimi-code/AGENTS.md` in the clone (the
   launcher writes it and keeps it out of git; never commit it). In its shell, `git push` and `gh` are
   refused. Its web tools are off unless `allowNetwork`: the launcher checks Kimi's own config for
   that. It runs `--yolo`, so it may stop on an approval prompt for a command it rates dangerous. The
@@ -147,7 +147,7 @@ refuses any reason that mentions a limit (`limit`, `quota`, `credit`, `5h`, `403
 message) until you answer which it is: an agent's usage limit goes to `wait-limit`, and a block that
 really needs the human (a GitHub, CI or disk limit, a Codex warning chooser that could not fail over) is
 reported with `--needs-human` added. Run
-`python "$AGWORKBENCH/lib/wb.py" wait-limit --reason "<the limit line>"` (add `--box claude` for your
+`python "$WAGFLOW/lib/wb.py" wait-limit --reason "<the limit line>"` (add `--box claude` for your
 own limit). On its next check the relay starts the same wait: a `... waiting` mail, held mail, a probe every
 `limitRetryMinutes`. A Kimi implementer's limit is waited out without you when the relay's stall watch
 sees it. For Kimi the relay also probes about 5 hours after it first saw Kimi busy in the current
@@ -162,10 +162,10 @@ and the episode ended, run `wait-limit` again.
      be text the agent printed from a file, a diff or a test.
   2. Fail over. The command may take up to two minutes while it checks that the pane is idle, so
      run it through Bash with `timeout: 600000`. Your shell is Git Bash, which only finds the
-     launcher by its full name, `github-workbench.cmd`:
+     launcher by its full name, `wagflow.cmd`:
 
      ```bash
-     github-workbench.cmd <owner/repo#N> -Failover
+     wagflow.cmd <owner/repo#N> -Failover
      ```
 
      If the agent already exited, it switches straight away. If it is still running, the launcher
@@ -173,7 +173,7 @@ and the episode ended, run `wait-limit` again.
      exactly one agent process). It records the limit, clears the pane, starts the next tool in
      `failoverOrder` there (by default Codex and Claude replace each other, and a limited Kimi goes
      to Claude), and restarts the relay for it. It never types into the limited agent.
-  3. Hand over. Run `python "$AGWORKBENCH/lib/wb.py" handover`, then mail the new implementer
+  3. Hand over. Run `python "$WAGFLOW/lib/wb.py" handover`, then mail the new implementer
      (kind `task`, subject `HANDOVER`):
      - the current phase and plan version;
      - the open request's id and subject from that output;
@@ -185,16 +185,16 @@ and the episode ended, run `wait-limit` again.
   human the refusal line and set `wb.py status blocked --sound` (in queue mode, first
   `wb.py loop-state blocked --environmental --needs-human --reason "<the refusal line>"`). Exit 2 means nothing was stopped
   and nothing changed. A tool with a recorded limit is never switched back to automatically: the
-  human clears it with `github-workbench <issue> -Implementer <tool>` once its limit has reset.
+  human clears it with `wagflow <issue> -Implementer <tool>` once its limit has reset.
   In queue mode, tell them that this clears only the checkout's record. For new members to use
-  that tool again, the queue's record needs `github-workbench -Queue <spec> -ClearLimit <tool>` too
-  (plus `-QueueName <name>` for a named queue: `queueName` in `.workbench/state/queue-member.json`).
+  that tool again, the queue's record needs `wagflow -Queue <spec> -ClearLimit <tool>` too
+  (plus `-QueueName <name>` for a named queue: `queueName` in `.wagflow/state/queue-member.json`).
 - **`-Failover` stopped the agent but did not switch** (exit 3, `Failover incomplete: ...`): the
   limited agent may be gone, and its limit is recorded. Tell the human the line and set blocked
   (in queue mode, with `--environmental --needs-human`). They
-  relaunch with `github-workbench <issue> -Implementer <other tool>` once the pane is a clean shell.
+  relaunch with `wagflow <issue> -Implementer <other tool>` once the pane is a clean shell.
   In queue mode, also tell them that the queue keeps its own record of the limit, which
-  `github-workbench -Queue <spec> -ClearLimit <tool>` (with `-QueueName` for a named queue) clears once the limit has reset.
+  `wagflow -Queue <spec> -ClearLimit <tool>` (with `-QueueName` for a named queue) clears once the limit has reset.
 - **`failover=false`**: tell the human and set blocked. In queue mode, first report
   `wb.py loop-state blocked --environmental --needs-human --reason "<tool> limited; failover is off"`.
   `--needs-human` answers the `onLimit=wait` refusal: a Codex warning chooser is not waited out.
@@ -237,8 +237,8 @@ pressure, a helper's result went unnoticed, or the implementer is waiting on a q
 The mail quotes the implementer's last line when it has one.
 
 1. Check your background waiter. If it is gone, rearm it: one waiter, never two.
-2. Look for a finished helper: mail from `helper`, `revmux` or `human`, `.workbench/state/helpers/*.done`,
-   and `.workbench/review/`. Act on the result.
+2. Look for a finished helper: mail from `helper`, `revmux` or `human`, `.wagflow/state/helpers/*.done`,
+   and `.wagflow/review/`. Act on the result.
 3. If the implementer is at its usage limit (the mail says `The implementer's pane shows a
    usage-limit error: ...`, or its pane shows one): in an `onLimit=wait` checkout run
    `wb.py wait-limit --reason "<the limit line>"` and never report blocked (see "Usage limits"; a
@@ -248,7 +248,7 @@ The mail quotes the implementer's last line when it has one.
 4. Continue the loop. If it really waits on the human, say so in one line and run
    `wb.py status blocked --sound` (in queue mode, also `wb.py loop-state blocked --reason ...`).
 
-`wb.py status blocked` records `.workbench/state/waiting.json`. That record is a latch: while it
+`wb.py status blocked` records `.wagflow/state/waiting.json`. That record is a latch: while it
 exists the stall watch is off. So when the human answers and you resume, run `wb.py status active`,
 which removes it. `loop-state resumed` and `loop-state done` remove it too. With no progress for two
 more periods after the pointer (no commit, no mail, no helper, no loop report), the relay reports
@@ -258,10 +258,10 @@ mode reports `loop-state blocked` with a reason starting `stalled:`. To continue
 
 ## Adopted session
 
-If the launcher printed `WORKBENCH ADOPTED`, this existing Claude session now owns that issue.
+If the launcher printed `WAGFLOW ADOPTED`, this existing Claude session now owns that issue.
 Use its printed `context:` line as the prefix of **every shell command** for the rest of this
 loop: `<context line> && <command>`, including the background `wb.py wait-mail` command. It sources
-the generated `adopted.sh`, changes to the issue checkout, and sets `AGWORKBENCH`, `AI_HUB` and
+the generated `adopted.sh`, changes to the issue checkout, and sets `WAGFLOW`, `AI_HUB` and
 `AI_BOX=claude`. These values replace any inherited context, even if `AI_HUB` was already set.
 If sourcing or changing directory fails, fix the context before running work commands; never
 continue in the old checkout. Continue this command yourself with the printed issue reference;
@@ -269,14 +269,14 @@ the human does not need to type a slash command into your composer.
 
 Shell context does not change the project root used by Read, Write, Edit, Grep, or other file
 tools. For **every file read or written for this loop**, use an **absolute path under the printed
-`checkout:` directory**, never a relative path. This includes `.workbench/issue.md`, `plan.md`,
+`checkout:` directory**, never a relative path. This includes `.wagflow/issue.md`, `plan.md`,
 scope and PR body files, and all source files inspected or reviewed. Apply the same rule to file
 paths in shell commands; do not let the original project root select the old checkout.
 
 ## Queue mode
 
-When `.workbench/state/queue-member.json` exists, this issue belongs to an unattended queue.
-Report phase changes with `python "$AGWORKBENCH/lib/wb.py" loop-state`; it writes this checkout's
+When `.wagflow/state/queue-member.json` exists, this issue belongs to an unattended queue.
+Report phase changes with `python "$WAGFLOW/lib/wb.py" loop-state`; it writes this checkout's
 durable report for the conductor. Never edit the global queue file or start another issue yourself.
 When a human answers a blocked issue, run `wb.py loop-state resumed` before continuing. Keep the
 same conversation and the one-background-waiter rule. A PR is the queue's handoff, not permission
@@ -291,31 +291,31 @@ tool. A question for the human is a plain `loop-state blocked` and frees the slo
 
 ## The channel
 
-Everything goes through the workbench mailbox (`$AI_HUB`, the `.workbench/` folder of this clone).
+Everything goes through the WagFlow mailbox (`$AI_HUB`, the `.wagflow/` folder of this clone).
 You never type into Codex's pane and Codex never types into yours: the relay does the ringing.
 
 ```bash
-python "$AGWORKBENCH/lib/agmsg.py" send --to codex --kind review-request --subject "plan v1 for #N" --body-file .workbench/plan.md
-python "$AGWORKBENCH/lib/agmsg.py" read <id>   # id from the waiter's NEW MAIL: line or Chat from Workbench: pointer
-python "$AGWORKBENCH/lib/agmsg.py" list        # anything unread
+python "$WAGFLOW/lib/wagmsg.py" send --to codex --kind review-request --subject "plan v1 for #N" --body-file .wagflow/plan.md
+python "$WAGFLOW/lib/wagmsg.py" read <id>   # id from the waiter's NEW MAIL: line or Chat from WagFlow: pointer
+python "$WAGFLOW/lib/wagmsg.py" list        # anything unread
 ```
 
 Helper sessions and your sidebar status go through `wb.py`, which derives every path from `AI_HUB`
 - your shell is Git Bash, whose `$PWD` is a POSIX path PowerShell cannot use:
 
 ```bash
-python "$AGWORKBENCH/lib/wb.py" status active            # or blocked --sound, completed
+python "$WAGFLOW/lib/wb.py" status active            # or blocked --sound, completed
 ```
 
 - **No `--nudge`, ever.** The relay rings Codex. A nudge would type into its pane directly.
 - **After you send or launch a review helper, keep one background mail waiter and end your turn.**
-  Run `python "$AGWORKBENCH/lib/wb.py" wait-mail` through Bash with `run_in_background: true`.
+  Run `python "$WAGFLOW/lib/wb.py" wait-mail` through Bash with `run_in_background: true`.
   Remember its task ID. If your waiter is still running, reuse it; never start a second one.
   Claude Code wakes you when the background command completes, even if your composer holds a draft.
   Every instruction below to end your turn while waiting for mail refers to this rule.
 - **Every waiter completion means that task has stopped.** Clear its task ID, even if all IDs in
-  its output were already handled after an earlier relay ring. On exit **0**, run `agmsg list`,
-  then `agmsg read <id>` for each unread message, including any still-unread IDs in its `NEW MAIL:`
+  its output were already handled after an earlier relay ring. On exit **0**, run `wagmsg list`,
+  then `wagmsg read <id>` for each unread message, including any still-unread IDs in its `NEW MAIL:`
   output. Read the files before acting; reading moves them out of unread. Handle the mail, then
   start a replacement waiter if the loop still needs a reply or review, even when this completion
   named only already-handled IDs or the inbox is now empty. On exit **3** (timeout), check for
@@ -323,7 +323,7 @@ python "$AGWORKBENCH/lib/wb.py" status active            # or blocked --sound, c
   `wb.py status blocked --sound`; in queue mode first report
   `wb.py loop-state blocked --reason "mail waiter configuration error"`. Fix the cause before
   rearming, never loop blindly on errors.
-- The relay's `Chat from Workbench:` pointer is a second doorbell. If it arrives first, read the
+- The relay's `Chat from WagFlow:` pointer is a second doorbell. If it arrives first, read the
   mail and keep the existing waiter only while it has not completed. Ignore duplicate message
   contents for IDs already read and handled, but never ignore a waiter completion: apply the
   completion/rearm rule above. A waiter that did not see that mail keeps waiting for later unread mail.
@@ -336,8 +336,8 @@ python "$AGWORKBENCH/lib/wb.py" status active            # or blocked --sound, c
 ## Phase 0 - orient
 
 ```bash
-python "$AGWORKBENCH/lib/agmsg.py" doctor      # both panes registered, you are claude
-python "$AGWORKBENCH/lib/wb.py" status active
+python "$WAGFLOW/lib/wagmsg.py" doctor      # both panes registered, you are claude
+python "$WAGFLOW/lib/wb.py" status active
 ```
 
 Parse `$ARGUMENTS` into owner/repo and number (a bare number means this clone's repo: its `origin`,
@@ -355,7 +355,7 @@ on it alone.
 gh issue view <N> --repo <owner/repo> --json number,title,body,labels,comments,url
 ```
 
-Write it to `.workbench/issue.md` - title, URL, body, and every comment. **Codex has no network,
+Write it to `.wagflow/issue.md` - title, URL, body, and every comment. **Codex has no network,
 so this file is the only way it sees the issue.** Then read the code the issue touches until you can
 say how you would change it.
 
@@ -366,17 +366,17 @@ say how you would change it.
 If intake or the plan round shows the issue is a duplicate, already fixed on the default branch,
 or not planned, give Codex the evidence (duplicate issue, fixing commit, or passing check) and
 agree on the no-op verdict as `AGREED: no-op`. Post that evidence as an issue comment with the
-`<!-- agworkbench:planner -->` marker. With `autonomous=true`, close the issue with the matching
+`<!-- wagflow:planner -->` marker. With `autonomous=true`, close the issue with the matching
 GitHub reason (`gh issue close <N> --repo <owner/repo> --reason "not planned"` for a duplicate or declined work;
 `--reason "completed"` when already fixed). Without autonomy, report
 `loop-state blocked --reason "no-op: <evidence>; close the issue to finish"` in queue mode, then
 set `wb.py status blocked --sound` and wait for the human to decide and close it. Once GitHub
 reports CLOSED, run `wb.py status active` and then
-`python "$AGWORKBENCH/lib/wb.py" loop-state done --no-pr --reason "<why>"` as the last act,
+`python "$WAGFLOW/lib/wb.py" loop-state done --no-pr --reason "<why>"` as the last act,
 including in queue mode. A blocked queue member can report `done --no-pr` directly; a
 `loop-state resumed` report is not needed. Do not report `loop-state blocked` for a closed no-op issue.
 
-Write `.workbench/plan.md`:
+Write `.wagflow/plan.md`:
 
 - **Goal** - one paragraph, in the issue's terms.
 - **Acceptance criteria** - checkable, each one a thing a test or a command can show.
@@ -423,7 +423,7 @@ And these rules, which the plan states where they apply:
 Before sending each plan version, check it:
 
 ```bash
-python "$AGWORKBENCH/lib/wb.py" plan-check
+python "$WAGFLOW/lib/wb.py" plan-check
 ```
 
 Exit 1 names what is missing; fix the plan, do not send it. Kimi's critique round stays: it may point
@@ -439,7 +439,7 @@ is not, and verify any claim it makes about the code yourself before accepting i
 
 Agreement is explicit: Codex's reply begins with `AGREED: plan vK`. No agreement after four rounds
 means the disagreement belongs to the human: state both positions in chat, set
-`python "$AGWORKBENCH/lib/wb.py" status blocked --sound`, and wait.
+`python "$WAGFLOW/lib/wb.py" status blocked --sound`, and wait.
 In queue mode, before ending that turn, run `wb.py loop-state blocked --reason "plan disagreement"`.
 
 An open question only the human can answer goes to the human now, not after implementation.
@@ -464,13 +464,13 @@ yourself before reviewing it: `git log --oneline origin/<default>..HEAD` and
    change to a must-not-change item, a test that skips instead of running the oracle, or a strict new
    decode goes back as a fix round (`FIX r<K>` with the evidence) before revmux runs. Never merge on
    Kimi's own report.
-1. Write `.workbench/review/scope-r<K>.md`: what the change is for (link the plan), the diff range
+1. Write `.wagflow/review/scope-r<K>.md`: what the change is for (link the plan), the diff range
    `origin/<default>..HEAD`, the acceptance criteria, where to look hardest, and what is out of
    scope. Tell reviewers **not** to run interactive or GUI tests.
 2. Launch revmux in its own **visible** session - never a hidden background process:
 
    ```bash
-   python "$AGWORKBENCH/lib/wb.py" revmux --round <K> --scope .workbench/review/scope-r<K>.md
+   python "$WAGFLOW/lib/wb.py" revmux --round <K> --scope .wagflow/review/scope-r<K>.md
    ```
 
    Keep the background waiter and end your turn. The report is posted to you as mail from
@@ -483,10 +483,10 @@ yourself before reviewing it: `git log --oneline origin/<default>..HEAD` and
 4. Record the round's decision (#64) before you send anything:
 
    ```bash
-   python "$AGWORKBENCH/lib/wb.py" review-round --round <K>
+   python "$WAGFLOW/lib/wb.py" review-round --round <K>
    ```
 
-   It reads `.workbench/review/revmux-r<K>.md` and counts the Blocker, Critical and Major findings.
+   It reads `.wagflow/review/revmux-r<K>.md` and counts the Blocker, Critical and Major findings.
    When one of them did not verify (you could not reproduce it, or it is really a Minor), pass the
    verified count with the reason: `--severe <n> --reason "<why>"`. Never go below revmux's count
    without a reason. The difference counts as Minor findings, so the round stops rather than reads
@@ -536,7 +536,7 @@ Codex cannot push. You do:
 
 ```bash
 git push -u origin HEAD
-gh pr create --repo <owner/repo> --base <default> --title "<title>" --body-file .workbench/pr-body.md
+gh pr create --repo <owner/repo> --base <default> --title "<title>" --body-file .wagflow/pr-body.md
 ```
 
 The body: what changed and why, `Closes #<N>`, how it was tested, and the review record - rounds
@@ -546,15 +546,15 @@ It ends with the planner marker line. The relay notices the PR on its next check
 
 **A stop's deferred minors are filed now**, with or without auto-merge - nothing later files them
 when the human merges: right after `gh pr create`, run
-`python "$AGWORKBENCH/lib/wb.py" follow-up file --source <N> --pr <P>`, run `review-round --summary`
-again, put its line (now with the leftovers URL) in `.workbench/pr-body.md`, and
-`gh pr edit <P> --repo <owner/repo> --body-file .workbench/pr-body.md`.
+`python "$WAGFLOW/lib/wb.py" follow-up file --source <N> --pr <P>`, run `review-round --summary`
+again, put its line (now with the leftovers URL) in `.wagflow/pr-body.md`, and
+`gh pr edit <P> --repo <owner/repo> --body-file .wagflow/pr-body.md`.
 
 ## Phase 6 - the human's review
 
 ### Auto-merge (only when this checkout has it on)
 
-`python "$AGWORKBENCH/lib/wb.py" settings` prints `autoMerge=true` only when the human turned it on
+`python "$WAGFLOW/lib/wb.py" settings` prints `autoMerge=true` only when the human turned it on
 (`-AutoMerge` or `"autoMerge": true`). Otherwise skip this section: merging is the human's. With it
 on, you merge only when **all** of these hold:
 
@@ -583,7 +583,7 @@ on, you merge only when **all** of these hold:
    and only then run:
 
    ```bash
-   python "$AGWORKBENCH/lib/wb.py" merge-check --pr <N> --head <full sha>
+   python "$WAGFLOW/lib/wb.py" merge-check --pr <N> --head <full sha>
    ```
 
    **Retryable failures:** `relay:` (wait for the relay's mail), `mail:` (read and handle the mail),
@@ -595,7 +595,7 @@ on, you merge only when **all** of these hold:
 
    | merge-check line | what you do |
    |---|---|
-   | `ci-pending:` | Any check still running, required or optional (merge-check reports nothing else about CI until all are done). End your turn: the relay's `ci` mail for this head (see "CI results") wakes you when CI finishes, and you run merge-check again. You may also start `python "$AGWORKBENCH/lib/wb.py" wait-ci --pr <N> --head <full sha>` in the background (it is not a mail waiter; keep your one mail waiter too); whichever comes first counts, so stop the other. When wait-ci ends: exit 0 (`CI DONE`) - run merge-check again; exit 4 (head changed / PR not open) - stop and look; exit 3 (timeout) - the human's. A wait-ci that was **killed** (low memory) means "rerun merge-check", never "CI done". |
+   | `ci-pending:` | Any check still running, required or optional (merge-check reports nothing else about CI until all are done). End your turn: the relay's `ci` mail for this head (see "CI results") wakes you when CI finishes, and you run merge-check again. You may also start `python "$WAGFLOW/lib/wb.py" wait-ci --pr <N> --head <full sha>` in the background (it is not a mail waiter; keep your one mail waiter too); whichever comes first counts, so stop the other. When wait-ci ends: exit 0 (`CI DONE`) - run merge-check again; exit 4 (head changed / PR not open) - stop and look; exit 3 (timeout) - the human's. A wait-ci that was **killed** (low memory) means "rerun merge-check", never "CI done". |
    | `ci-failed:` | Reported only once nothing is running. A GitHub Actions check: `wb.py ci-rerun --pr <N>` (once; counted only when a rerun started). Exit 0: wait for the relay's next `ci` mail (or wait-ci), then merge-check. Exit 2 is operational: retry ci-rerun, or, when it says `rerun started`, wait as after exit 0. Still `ci-failed:`, or ci-rerun exits 1 (external CI, or the rerun is used): `wb.py merge-round --pr <N> --kind ci-fix`, then `wb.py ci-log --pr <N>` (exit 2: no job log could be fetched yet - retry it) and a `FIX r<K>` round whose evidence is the log file it wrote; after the fix, the whole suite, push, wait for the relay's `ci` mail for the new head (or wait-ci), merge-check. Still red, or merge-round refuses: the human's. |
    | `behind:` / `conflict:` | An UPDATE round, below. |
    | `ci-optional-failed:`, `head:`, `state:`, `mergeable:`, and every other line | Final for this head: the human's. |
@@ -607,7 +607,7 @@ on, you merge only when **all** of these hold:
    `UPDATED <sha>` or `CANNOT-RESOLVE <why>`. On `UPDATED`, prove it before anything else:
 
    ```bash
-   python "$AGWORKBENCH/lib/wb.py" update-check --reviewed <reviewed head sha> --base <base sha>
+   python "$WAGFLOW/lib/wb.py" update-check --reviewed <reviewed head sha> --base <base sha>
    ```
 
    It refuses anything but one merge commit of that base onto the reviewed head, with a clean tree
@@ -636,7 +636,7 @@ On `ok`, merge exactly that commit, then say so in the PR and in chat:
 
 ```bash
 gh pr merge <N> --repo <owner/repo> --merge --delete-branch --match-head-commit <full sha>
-gh pr comment <N> --repo <owner/repo> --body-file .workbench/merge-note.md
+gh pr comment <N> --repo <owner/repo> --body-file .wagflow/merge-note.md
 ```
 
 The note states each condition as a checked fact: "Merged automatically (auto-merge is on for this
@@ -653,7 +653,7 @@ review below.
 
 ### The human's review
 
-In queue mode, run `python "$AGWORKBENCH/lib/wb.py" loop-state pr-open --pr <url>` before ending
+In queue mode, run `python "$WAGFLOW/lib/wb.py" loop-state pr-open --pr <url>` before ending
 the turn, set `wb.py status idle`, and keep the background waiter. Do not open revdiff automatically.
 Tell the human that `wb.py human-review --base origin/<default>` opens it on demand, or they can
 review on GitHub. The conductor can start the next issue immediately; continue handling this PR's
@@ -662,11 +662,11 @@ feedback below in this session.
 Outside queue mode, open revdiff for the human in its own session, **selected**:
 
 ```bash
-python "$AGWORKBENCH/lib/wb.py" human-review --base origin/<default>
+python "$WAGFLOW/lib/wb.py" human-review --base origin/<default>
 ```
 
 Outside queue mode, tell them where it is and that reviewing on GitHub works just as well. Then set
-`python "$AGWORKBENCH/lib/wb.py" status blocked --sound`, keep the background waiter, and end your turn.
+`python "$WAGFLOW/lib/wb.py" status blocked --sound`, keep the background waiter, and end your turn.
 
 Their feedback reaches you as mail - from `human` (revdiff annotations) or from `github` (PR
 reviews, comments, line comments, the review decision). For each round of it:
@@ -683,7 +683,7 @@ reviews, comments, line comments, the review decision). For each round of it:
 
 When mail arrives saying the PR was **MERGED**: post a short summary in chat (what shipped, rounds,
 anything deferred), mail Codex that the loop is complete, run
-`python "$AGWORKBENCH/lib/wb.py" status completed`, stop any running background waiter by its task ID,
+`python "$WAGFLOW/lib/wb.py" status completed`, stop any running background waiter by its task ID,
 and stop. With full autonomy, run `wb.py loop-state done --pr <P> --sha <sha>` as the very last step. The final note to Codex does not rearm the waiter. If it was **CLOSED** without merging, ask the
 human what they want next. In queue mode first run
 `wb.py loop-state blocked --reason "PR closed"`, set blocked status, and keep the background waiter.
@@ -696,18 +696,18 @@ human what they want next. In queue mode first run
   exists to get to the point where they choose to.
 - Every PR body, PR comment and review reply you post ends with the planner marker line.
 - Never answer a prompt, chooser or dialog in Codex's pane, and never type into it.
-- Long-running tools - revmux, builds, test suites that take minutes - run in visible agwinterm
+- Long-running tools - revmux, builds, test suites that take minutes - run in visible WagTerm
   sessions, never hidden in a background shell. The human must be able to see and stop them.
   The sole exception is `wb.py wait-mail`, which runs through Bash with `run_in_background: true`
   so its completion wakes you. Review helpers (revmux and revdiff), builds and tests remain visible.
 - Run the whole suite, or a build, through the helper wrapper, never with a hand-rolled watcher:
 
   ```bash
-  python "$AGWORKBENCH/lib/wb.py" suite --label <sha7> -- <command and its arguments>
+  python "$WAGFLOW/lib/wb.py" suite --label <sha7> -- <command and its arguments>
   ```
 
   It opens `#N suite <label>` in its own visible session. It writes the log as UTF-8 to
-  `.workbench/review/suite-<label>.log`, whatever the command writes. When the command ends it mails
+  `.wagflow/review/suite-<label>.log`, whatever the command writes. When the command ends it mails
   you from `helper` with the exit code, the failure count and the log's tail. The relay rings you
   for that mail, so keep your one mail waiter and end your turn. Never start a background shell that
   watches a log or a marker: low memory kills it, and a Windows PowerShell 5.1 `>` log is UTF-16,

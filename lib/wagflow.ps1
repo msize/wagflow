@@ -1,61 +1,61 @@
 <#
 .SYNOPSIS
-  github-workbench <issue> - open a two-pane Claude + Codex workbench for a GitHub issue.
+  wagflow <issue> - open a two-pane Claude + Codex workflow for a GitHub issue.
 
 .DESCRIPTION
-  Claude Code on the left, Codex on the right, in one agwinterm session - the layout from
+  Claude Code on the left, Codex on the right, in one WagTerm session - the layout from
   umputun's agterm cookbook recipe `two-agent-chat`, on Windows. Claude starts by running
-  /start-github-issue, which drives the loop: agree a plan with Codex, Codex implements, Claude
+  /wagflow-start, which drives the loop: agree a plan with Codex, Codex implements, Claude
   reviews with revmux, Codex fixes, and the human reviews and merges the PR. Revdiff opens
   automatically only outside queue mode.
 
-  Run it from PowerShell or cmd. Inside agwinterm or agliteterm it adopts the caller's session;
-  -NewSession keeps the separate-session/resume behavior. From another terminal it starts agwinterm and opens
+  Run it from PowerShell or cmd. Inside WagTerm it adopts the caller's session;
+  -NewSession keeps the separate-session/resume behavior. From another terminal it starts wagterm and opens
   the session there.
 
-  Each issue gets its own full clone under ~/source/workbench, on branch issue-<n>-<slug>, and its
-  own mailbox in .workbench/ inside that clone. Running it again for the same issue resumes.
-  Inside agwinterm, -Queue runs an issue list, or a watched label or query, in separate sessions.
+  Each issue gets its own full clone under ~/source/wagflow, on branch issue-<n>-<slug>, and its
+  own mailbox in .wagflow/ inside that clone. Running it again for the same issue resumes.
+  Inside wagterm, -Queue runs an issue list, or a watched label or query, in separate sessions.
 
 .EXAMPLE
-  github-workbench 42                     # issue 42 of the repo in the current directory
-  github-workbench yeroo/agworkbench#7
-  github-workbench https://github.com/yeroo/agworkbench/issues/7
-  github-workbench 7 -DryRun              # print what would happen, touch nothing
-  github-workbench -Version              # report the installed toolchain
-  github-workbench 7 -Implementer claude  # Claude, not Codex, in the right pane (e.g. Codex out of quota)
-  github-workbench 7 -Implementer kimi    # Kimi Code in the right pane (#65)
-  github-workbench 7 -AutoMerge           # the planner merges its own PR when every condition holds
-  github-workbench 7 -Failover            # the planner, on a usage-limit mail: switch the implementer tool
-  github-workbench 7 -Autonomous          # merge, file follow-ups and close the sessions without the human
-  github-workbench 7 -BigReview           # a big issue: up to review.maxRoundsBig (10) revmux rounds (#75)
-  github-workbench 7 -WaitOnLimit         # a usage limit is waited out, never failed over (#77)
+  wagflow 42                     # issue 42 of the repo in the current directory
+  wagflow msize/wagflow#7
+  wagflow https://github.com/msize/wagflow/issues/7
+  wagflow 7 -DryRun              # print what would happen, touch nothing
+  wagflow -Version              # report the installed toolchain
+  wagflow 7 -Implementer claude  # Claude, not Codex, in the right pane (e.g. Codex out of quota)
+  wagflow 7 -Implementer kimi    # Kimi Code in the right pane (#65)
+  wagflow 7 -AutoMerge           # the planner merges its own PR when every condition holds
+  wagflow 7 -Failover            # the planner, on a usage-limit mail: switch the implementer tool
+  wagflow 7 -Autonomous          # merge, file follow-ups and close the sessions without the human
+  wagflow 7 -BigReview           # a big issue: up to review.maxRoundsBig (10) revmux rounds (#75)
+  wagflow 7 -WaitOnLimit         # a usage limit is waited out, never failed over (#77)
 .EXAMPLE
-  github-workbench -Queue 'yeroo/agworkbench#7,10' -Parallel 2
+  wagflow -Queue 'msize/wagflow#7,10' -Parallel 2
 .EXAMPLE
-  github-workbench -Queue 'label:ready' -Repo yeroo/agworkbench -Watch
-  github-workbench -Queue 'label:ready' -Repo yeroo/agworkbench -ClearLimit codex   # codex's limit has reset (#61)
+  wagflow -Queue 'label:ready' -Repo msize/wagflow -Watch
+  wagflow -Queue 'label:ready' -Repo msize/wagflow -ClearLimit codex   # codex's limit has reset (#61)
 .EXAMPLE
-  github-workbench -Queue bugs -Repo yeroo/docxy -Autonomous   # every open bug nobody is handling
+  wagflow -Queue bugs -Repo yeroo/docxy -Autonomous   # every open bug nobody is handling
 .EXAMPLE
-  github-workbench -Queue bugs -Repo yeroo/docxy -Autonomous -Triage   # P0 first; untriaged triaged first
+  wagflow -Queue bugs -Repo yeroo/docxy -Autonomous -Triage   # P0 first; untriaged triaged first
 .EXAMPLE
   # A second, named queue of the same repo (#66): its own workspace (docxy-kimi), checkouts
   # (docxy-kimi-issue-N) and settings; an issue one queue holds is skipped by the other.
-  github-workbench -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName kimi -Implementer kimi -NoAutoMerge -Watch
+  wagflow -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName kimi -Implementer kimi -NoAutoMerge -Watch
 .EXAMPLE
-  github-workbench -Queue 'where: bug AND priority IN [P0, P1] AND NOT wontfix' -Repo yeroo/docxy
-  github-workbench -Queue "where: label IN [bug, regression] AND NOT 'needs design'" -Repo yeroo/docxy
+  wagflow -Queue 'where: bug AND priority IN [P0, P1] AND NOT wontfix' -Repo yeroo/docxy
+  wagflow -Queue "where: label IN [bug, regression] AND NOT 'needs design'" -Repo yeroo/docxy
 .EXAMPLE
-  github-workbench -Triage -Repo yeroo/docxy            # label every untriaged open issue priority:P0..P3
-  github-workbench -Triage -Repo yeroo/docxy -Watch     # and keep doing it for new ones, in its own session
-  github-workbench -Retriage -Repo yeroo/docxy -DryRun  # re-judge the labelled ones too; print, write nothing
-  github-workbench -Triage -Retriage -FollowUps -Repo yeroo/docxy -Limit 200
-  github-workbench -Triage -Retriage -KimiOnly -Repo yeroo/docxy   # only the kimi label, on open P2/P3 (#77)
+  wagflow -Triage -Repo yeroo/docxy            # label every untriaged open issue priority:P0..P3
+  wagflow -Triage -Repo yeroo/docxy -Watch     # and keep doing it for new ones, in its own session
+  wagflow -Retriage -Repo yeroo/docxy -DryRun  # re-judge the labelled ones too; print, write nothing
+  wagflow -Triage -Retriage -FollowUps -Repo yeroo/docxy -Limit 200
+  wagflow -Triage -Retriage -KimiOnly -Repo yeroo/docxy   # only the kimi label, on open P2/P3 (#77)
 .EXAMPLE
-  github-workbench -Cleanup -DryRun                     # list finished checkouts and their sizes; delete nothing
-  github-workbench -Cleanup -Repo yeroo/docxy           # delete docxy's finished checkouts that are safe to delete
-  github-workbench -Cleanup -BuildOnly                  # only their target/, node_modules/, bin/, obj/
+  wagflow -Cleanup -DryRun                     # list finished checkouts and their sizes; delete nothing
+  wagflow -Cleanup -Repo yeroo/docxy           # delete docxy's finished checkouts that are safe to delete
+  wagflow -Cleanup -BuildOnly                  # only their target/, node_modules/, bin/, obj/
 #>
 [CmdletBinding(PositionalBinding = $false)]
 param(
@@ -101,7 +101,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($ArgsEnv) {
-    # From the PowerShell entry point (github-workbench.ps1 next to the .cmd, #38): the caller's
+    # From the PowerShell entry point (wagflow.ps1 next to the .cmd, #38): the caller's
     # arguments as a JSON array in a one-off environment variable, bound here by name, exactly as
     # typed - no command line in between that could split them or strip their quotes.
     $raw = [Environment]::GetEnvironmentVariable($ArgsEnv)
@@ -131,7 +131,7 @@ if ($ArgsEnv) {
         if ($exact.Count -eq 1) { $found = $exact }
         if ($found.Count -ne 1) {
             $why = if ($found.Count) { 'is ambiguous' } else { 'is not a parameter' }
-            Write-Host "github-workbench: -$given $why" -ForegroundColor Yellow
+            Write-Host "WagFlow: -$given $why" -ForegroundColor Yellow
             exit 2
         }
         $parameter = $found[0]
@@ -142,7 +142,7 @@ if ($ArgsEnv) {
         }
         if (-not $hasValue -or $value -eq '') {
             if ($i + 1 -ge $tokens.Count) {
-                Write-Host "github-workbench: -$($parameter.Name) needs a value" -ForegroundColor Yellow
+                Write-Host "WagFlow: -$($parameter.Name) needs a value" -ForegroundColor Yellow
                 exit 2
             }
             $i++
@@ -153,7 +153,7 @@ if ($ArgsEnv) {
     & $PSCommandPath @named @positional
     exit $LASTEXITCODE
 }
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
 
 if ($Version) {
     $others = @($PSBoundParameters.Keys | Where-Object { $_ -ne 'Version' } | Sort-Object)
@@ -169,10 +169,10 @@ if ($Cleanup -or $BuildOnly) {
     # The checkout sweep (#41): lib/cleanup.py, over the configured checkoutRoot.
     $others = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('Cleanup', 'BuildOnly', 'Repo', 'DryRun') })
     if (-not $Cleanup -or $others) {
-        Write-Host 'usage: github-workbench -Cleanup [-Repo owner/name] [-DryRun] [-BuildOnly]' -ForegroundColor Yellow
+        Write-Host 'usage: wagflow -Cleanup [-Repo owner/name] [-DryRun] [-BuildOnly]' -ForegroundColor Yellow
         exit 2
     }
-    try { $config = Get-WorkbenchConfig } catch { Write-Host $_ -ForegroundColor Yellow; exit 2 }
+    try { $config = Get-WagFlowConfig } catch { Write-Host $_ -ForegroundColor Yellow; exit 2 }
     $cleanupArgs = @((Join-Path $script:Lib 'cleanup.py'), 'sweep', '--root', [string]$config.checkoutRoot)
     if ($Repo) { $cleanupArgs += @('--repo', $Repo) }
     if ($DryRun) { $cleanupArgs += '--dry-run' }
@@ -202,7 +202,7 @@ if ($Workspace -and -not $QueueName) {
     exit 2
 }
 if ($QueueName -and $Triage) {
-    Write-Host "a named queue does not triage; triage is the repo-wide github-workbench -Triage -Repo <owner/name> -Watch" -ForegroundColor Yellow
+    Write-Host "a named queue does not triage; triage is the repo-wide wagflow -Triage -Repo <owner/name> -Watch" -ForegroundColor Yellow
     exit 2
 }
 if ($PSBoundParameters.ContainsKey('RevmuxProfile') -and
@@ -258,8 +258,8 @@ if ($PSBoundParameters.ContainsKey('Queue')) {
         exit 2
     }
     if (-not $Queue -or $Issue -or $NewSession -or $NoRelay -or $QueueMember -or $QueueAttempt -or $QueueToken -or
-        (-not (Test-InsideAgwinterm)) -or ($PSBoundParameters.ContainsKey('Parallel') -and ($Parallel -lt 1 -or $Parallel -gt 8))) {
-        Write-Host 'Queue requires agwinterm, a spec and Parallel 1..8; Issue/NewSession/NoRelay/internal member options cannot be combined with it.'
+        (-not (Test-InsideWagterm)) -or ($PSBoundParameters.ContainsKey('Parallel') -and ($Parallel -lt 1 -or $Parallel -gt 8))) {
+        Write-Host 'Queue requires wagterm, a spec and Parallel 1..8; Issue/NewSession/NoRelay/internal member options cannot be combined with it.'
         exit 2
     }
     # The spec travels in the environment, not argv: Windows PowerShell 5.1 strips the double quotes
@@ -290,12 +290,12 @@ if ($PSBoundParameters.ContainsKey('Queue')) {
         Write-Host '-Retriage, -KimiOnly and -Limit belong to -Triage without -Queue; a queue triages each untriaged member once.' -ForegroundColor Yellow
         exit 2
     }
-    $env:AGWORKBENCH_QUEUE_SPEC = $Queue
+    $env:WAGFLOW_QUEUE_SPEC = $Queue
     try {
         & python @queueArgs
         $code = $LASTEXITCODE
     } finally {
-        Remove-Item Env:\AGWORKBENCH_QUEUE_SPEC -ErrorAction SilentlyContinue
+        Remove-Item Env:\WAGFLOW_QUEUE_SPEC -ErrorAction SilentlyContinue
     }
     exit $code
 }
@@ -305,12 +305,12 @@ if ($Triage -or $Retriage) {
         $PSBoundParameters.ContainsKey('Parallel') -or $AutoMerge -or $NoAutoMerge -or $Autonomous -or $NoAutonomous -or $BigReview -or $NoBigReview -or
         $WaitOnLimit -or $NoWaitOnLimit -or $Failover -or $Prune -or ($FollowUps -and $Watch) -or
         ($PSBoundParameters.ContainsKey('Limit') -and $Limit -lt 1) -or ($Watch -and ($Retriage -or $DryRun -or $KimiOnly))) {
-        Write-Host 'usage: github-workbench -Triage|-Retriage -Repo owner/name [-Limit N] [-DryRun] [-FollowUps] [-KimiOnly] | -Triage -Repo owner/name -Watch' -ForegroundColor Yellow
+        Write-Host 'usage: wagflow -Triage|-Retriage -Repo owner/name [-Limit N] [-DryRun] [-FollowUps] [-KimiOnly] | -Triage -Repo owner/name -Watch' -ForegroundColor Yellow
         exit 2
     }
     $triageArgs = @((Join-Path $script:Lib 'triage.py'))
     if ($Watch) {
-        if (-not (Test-InsideAgwinterm)) { Write-Host '-Triage -Watch requires agwinterm.' -ForegroundColor Yellow; exit 2 }
+        if (-not (Test-InsideWagterm)) { Write-Host '-Triage -Watch requires wagterm.' -ForegroundColor Yellow; exit 2 }
         $triageArgs += @('start-watch', '--repo', $Repo)
     } else {
         $triageArgs += @('run', '--repo', $Repo)
@@ -330,12 +330,12 @@ if ($PSBoundParameters.ContainsKey('Parallel') -or $Watch -or $Retry -or $Prune 
 }
 
 if (-not $Issue) {
-    Write-Host "usage: github-workbench <issue> [-Repo owner/name] [-DryRun] [-Yes] [-NewSession] [-Implementer codex|claude|kimi] [-AutoMerge|-NoAutoMerge] [-Autonomous|-NoAutonomous] [-BigReview|-NoBigReview] [-WaitOnLimit|-NoWaitOnLimit] [-Failover]" -ForegroundColor Yellow
-    Write-Host "       github-workbench -Version"
+    Write-Host "usage: wagflow <issue> [-Repo owner/name] [-DryRun] [-Yes] [-NewSession] [-Implementer codex|claude|kimi] [-AutoMerge|-NoAutoMerge] [-Autonomous|-NoAutonomous] [-BigReview|-NoBigReview] [-WaitOnLimit|-NoWaitOnLimit] [-Failover]" -ForegroundColor Yellow
+    Write-Host "       wagflow -Version"
     Write-Host "       (<spec> is a list like 3,4,5, label:<name>, bugs = label:<bugLabel>, or where: <label query>)"
-    Write-Host "       github-workbench -Queue <spec> [-Repo owner/name] [-Parallel 1..8] [-Watch] [-Prune] [-Retry] [-Yes] [-DryRun] [-Implementer codex|claude|kimi] [-ClearLimit codex|claude|kimi] [-AutoMerge|-NoAutoMerge] [-Autonomous|-NoAutonomous] [-BigReview|-NoBigReview] [-WaitOnLimit|-NoWaitOnLimit] [-Triage] [-RevmuxProfile <profile>] [-QueueName <name> [-Workspace <ws>]]"
-    Write-Host "       github-workbench -Triage|-Retriage -Repo owner/name [-Limit N] [-DryRun] [-FollowUps] [-KimiOnly] [-Watch]"
-    Write-Host "       github-workbench -Cleanup [-Repo owner/name] [-DryRun] [-BuildOnly]"
+    Write-Host "       wagflow -Queue <spec> [-Repo owner/name] [-Parallel 1..8] [-Watch] [-Prune] [-Retry] [-Yes] [-DryRun] [-Implementer codex|claude|kimi] [-ClearLimit codex|claude|kimi] [-AutoMerge|-NoAutoMerge] [-Autonomous|-NoAutonomous] [-BigReview|-NoBigReview] [-WaitOnLimit|-NoWaitOnLimit] [-Triage] [-RevmuxProfile <profile>] [-QueueName <name> [-Workspace <ws>]]"
+    Write-Host "       wagflow -Triage|-Retriage -Repo owner/name [-Limit N] [-DryRun] [-FollowUps] [-KimiOnly] [-Watch]"
+    Write-Host "       wagflow -Cleanup [-Repo owner/name] [-DryRun] [-BuildOnly]"
     Write-Host "  <issue> is 123, owner/repo#123, or https://github.com/owner/repo/issues/123"
     exit 2
 }
@@ -361,7 +361,7 @@ if ($QueueMember) {
         $context = $contextText | ConvertFrom-Json
         if ($context.repo -ne $memberRepo) { Write-Host 'Queue repository mismatch'; exit 2 }
         $script:Launch.QueueContext = $context
-        $env:AGWORKBENCH_CONFIG = $context.config
+        $env:WAGFLOW_CONFIG = $context.config
         # Reads have a short deadline; cloning uses the overall launcher deadline.
         function gh {
             & python (Join-Path $script:Lib 'conductor.py') gh-proxy -- @args

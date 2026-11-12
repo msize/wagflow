@@ -41,7 +41,7 @@ class Clones(unittest.TestCase):
         self.addCleanup(lambda: triage.remove_tree(cleanup.long_path(self.base)))
 
     def clone(self, number=7, name='repo', origin='https://github.com/o/repo.git', pushed=True):
-        """A workbench-shaped clone: `<root>/<name>-issue-<N>` on `issue-<N>-fix`, `.workbench/` excluded
+        """A wagflow-shaped clone: `<root>/<name>-issue-<N>` on `issue-<N>-fix`, `.wagflow/` excluded
         the way the launcher excludes it, the branch on a remote-tracking ref when `pushed`."""
         checkout = self.root / f'{name}-issue-{number}'
         checkout.mkdir()
@@ -53,9 +53,9 @@ class Clones(unittest.TestCase):
         run(checkout, 'add', 'README.md')
         run(checkout, 'commit', '-q', '-m', 'one')
         run(checkout, 'remote', 'add', 'origin', origin)
-        (checkout / '.git' / 'info' / 'exclude').write_text('.workbench/\n', encoding='utf-8')
-        (checkout / '.workbench' / 'state').mkdir(parents=True)
-        (checkout / '.workbench' / 'state' / 'relay-close.log').write_text('', encoding='utf-8')
+        (checkout / '.git' / 'info' / 'exclude').write_text('.wagflow/\n', encoding='utf-8')
+        (checkout / '.wagflow' / 'state').mkdir(parents=True)
+        (checkout / '.wagflow' / 'state' / 'relay-close.log').write_text('', encoding='utf-8')
         if pushed:
             self.push(checkout)
         return checkout
@@ -102,7 +102,7 @@ class Check(Clones):
 
     def test_uncommitted_or_untracked_work_keeps_it_but_ignored_files_do_not(self):
         checkout = self.clone()
-        (checkout / '.workbench' / 'state' / 'more.json').write_text('{}', encoding='utf-8')
+        (checkout / '.wagflow' / 'state' / 'more.json').write_text('{}', encoding='utf-8')
         self.assertEqual([], self.check(checkout))                              # ignored
         (checkout / 'notes.txt').write_text('draft', encoding='utf-8')
         self.assertReason('uncommitted changes: 1 path(s), first notes.txt', self.check(checkout))
@@ -166,7 +166,7 @@ class Check(Clones):
     def test_a_queue_still_running_the_member_keeps_it(self):
         checkout = self.clone()
         queue = self.base / 'queues' / 'o' / 'repo.json'
-        membership = checkout / '.workbench' / 'state' / 'queue-member.json'
+        membership = checkout / '.wagflow' / 'state' / 'queue-member.json'
         conductor.atomic_json(membership, {'queue': str(queue), 'repo': 'o/repo', 'number': 7})
         self.assertEqual([], self.check(checkout))                              # the queue file is gone
         for state, kept in (('active', True), ('pending', True), ('launching', True), ('merged', False), ('pr-open', False)):
@@ -193,12 +193,12 @@ class Check(Clones):
         plain = self.root / 'repo-issue-8'
         plain.mkdir()
         self.assertReason('no .git directory', self.check(plain, issue=8))
-        self.assertReason('not a workbench checkout name', self.check(self.root, root=self.base))
+        self.assertReason('not a WagFlow checkout name', self.check(self.root, root=self.base))
 
     def test_a_named_queue_checkout_is_ours_and_its_sessions_are_in_its_workspace(self):
         # #66: `<repo>-<queue>-issue-N`, whose sessions live in the workspace its membership records.
         checkout = self.clone(name='repo-kimi')
-        membership = checkout / '.workbench' / 'state' / 'queue-member.json'
+        membership = checkout / '.wagflow' / 'state' / 'queue-member.json'
         conductor.atomic_json(membership, {'queue': str(self.base / 'gone.json'), 'repo': 'o/repo', 'number': 7,
                                            'queueName': 'kimi', 'workspace': 'repo-kimi'})
         self.assertEqual([], self.check(checkout))
@@ -335,7 +335,7 @@ class AfterClose(Clones):
         return (self.root / cleanup.LOG_NAME).read_text(encoding='utf-8')
 
     def relay_log(self, checkout):
-        return (checkout / '.workbench' / 'state' / 'relay-close.log').read_text(encoding='utf-8')
+        return (checkout / '.wagflow' / 'state' / 'relay-close.log').read_text(encoding='utf-8')
 
     def test_merged_and_clean_is_deleted_once_the_last_session_is_gone(self):
         checkout = self.clone()
@@ -407,7 +407,7 @@ class AfterClose(Clones):
         # #66: the sessions to wait for are in the workspace the membership records; an unreadable
         # membership proves nothing gone, so the clone is kept.
         checkout = self.clone(name='repo-kimi')
-        membership = checkout / '.workbench' / 'state' / 'queue-member.json'
+        membership = checkout / '.wagflow' / 'state' / 'queue-member.json'
         conductor.atomic_json(membership, {'queue': str(self.base / 'gone.json'), 'repo': 'o/repo', 'number': 7,
                                            'workspace': 'repo-kimi'})
         self.trees = [{'workspaces': [{'name': 'repo-kimi', 'sessions': [{'id': 'r', 'name': '#7 your review'}]}]}]
@@ -453,16 +453,16 @@ class AfterClose(Clones):
 
 
 class Start(unittest.TestCase):
-    """How after-close is started so that closing the caller's agwinterm session does not end it. Checked
-    by hand: agwinterm's session job refuses breakaway and kills a DETACHED_PROCESS child on close,
+    """How after-close is started so that closing the caller's WagTerm session does not end it. Checked
+    by hand: WagTerm's session job refuses breakaway and kills a DETACHED_PROCESS child on close,
     while a Win32_Process.Create child outlives it."""
     def setUp(self):
         self.checkout = ROOT / 'nowhere' / 'repo-issue-7'
-        self.enterContext(patch.dict(os.environ, {'AGWINTERM_PIPE': 'agwinterm-test'}))
+        self.enterContext(patch.dict(os.environ, {'WAGTERM_PIPE': 'wagterm-test'}))
 
     def argv(self):
         return [sys.executable, str(ROOT / 'lib' / 'cleanup.py'), 'after-close', '--checkout', str(self.checkout.resolve()),
-                '--repo', 'o/repo', '--issue', '7', '--pr', '42', '--mode', 'merged', '--pipe', 'agwinterm-test']
+                '--repo', 'o/repo', '--issue', '7', '--pr', '42', '--mode', 'merged', '--pipe', 'wagterm-test']
 
     def test_breakaway_when_the_job_allows_it_with_its_cwd_outside_the_checkout(self):
         popen = Mock(return_value=Mock(pid=5))
@@ -636,7 +636,7 @@ class Sweep(Clones):
     def test_a_named_queue_checkout_is_swept_with_its_repo(self):
         # #66: -Cleanup recognises `<repo>-<queue>-issue-N`, and checks its sessions in its workspace.
         checkout = self.clone(7, name='repo-kimi')
-        conductor.atomic_json(checkout / '.workbench' / 'state' / 'queue-member.json',
+        conductor.atomic_json(checkout / '.wagflow' / 'state' / 'queue-member.json',
                               {'queue': str(self.base / 'gone.json'), 'repo': 'o/repo', 'number': 7, 'workspace': 'repo-kimi'})
         self.prs['issue-7-fix'] = [{'number': 40, 'state': 'MERGED', 'headRefOid': run(checkout, 'rev-parse', 'HEAD')}]
         busy = {'workspaces': [{'name': 'repo-kimi', 'sessions': [{'id': 's', 'name': '#7 revmux r1'}]}]}

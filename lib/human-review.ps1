@@ -5,11 +5,11 @@
 .DESCRIPTION
   Claude opens this in its own session and selects it, so it is in front of you:
 
-    agwintermctl session new --name "#N your review" --cwd <checkout> `
-      --command "pwsh -NoLogo -ExecutionPolicy Bypass -File <lib>\human-review.ps1 -Checkout <checkout> -Base origin/main"
+    wagtermctl session new --name "#N your review" --cwd <checkout> `
+      --command "pwsh -NoLogo -ExecutionPolicy Bypass -File <lib>\human-review.ps1 -Checkout <checkout> -Base origin/master"
 
-  wb.py human-review does this through a launch file (.workbench\state\helpers\launch-human-review.ps1)
-  that calls this script with its parameters, so the session's command line stays inside agwinterm's
+  wb.py human-review does this through a launch file (.wagflow\state\helpers\launch-human-review.ps1)
+  that calls this script with its parameters, so the session's command line stays inside WagTerm's
   limits (#86).
 
   revdiff is umputun's TUI for annotating a diff. Annotate what you want changed, press q, and the
@@ -22,9 +22,9 @@ param([Parameter(Mandatory = $true)] [string] $Checkout,
       [Parameter(Mandatory = $true)] [string] $Base)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
 Set-Location -LiteralPath $Checkout
-$hubDir = Join-Path $Checkout '.workbench'
+$hubDir = Join-Path $Checkout '.wagflow'
 $reviewDir = Join-Path $hubDir 'review'
 New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null
 $out = Join-Path $reviewDir ("human-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".md")
@@ -33,7 +33,7 @@ $posted = $false
 $why = $null
 try {
 if (-not (Get-Command revdiff -ErrorAction SilentlyContinue)) {
-    throw "revdiff is not installed - run install.ps1 from the agworkbench checkout"
+    throw "revdiff is not installed - run install.ps1 from the WagFlow checkout"
 }
 Write-Host "Your review of $Base..HEAD. Annotate, then press q; the notes go to Claude." -ForegroundColor Cyan
 & revdiff $Base --output $out

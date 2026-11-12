@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # Vendored from the ai-hub tooling (MIT, same author). Kept close to the original on purpose:
 # it is the tested half of this project - see tests/ there and here.
-"""agmsg - the inbox for the AI agents running on this machine.
+"""wagmsg - the inbox for the AI agents running on this machine.
 
-  agmsg register --role author            # tell the hub who and where you are
-  agmsg agents                            # who else is running, and is their pane still open
-  agmsg send --to codex-ai --subject "review the retry fix" --stdin --nudge
-  agmsg list                              # your unread messages
-  agmsg read                              # the oldest unread one, in full
-  agmsg reply <id> --text "..." --nudge
-  agmsg archive <id>
+  wagmsg register --role author            # tell the hub who and where you are
+  wagmsg agents                            # who else is running, and is their pane still open
+  wagmsg send --to codex-ai --subject "review the retry fix" --stdin --nudge
+  wagmsg list                              # your unread messages
+  wagmsg read                              # the oldest unread one, in full
+  wagmsg reply <id> --text "..." --nudge
+  wagmsg archive <id>
 
 A message is a markdown file under inbox/<box>/. `--nudge` additionally types one pointer line
 into the recipient's pane through peer-chat.py, which is what actually wakes an idle agent.
@@ -47,7 +47,7 @@ def me(create: bool = False) -> str:
     if create:
         return hub.register()["box"]
     fallback = hub.default_box()
-    print(f"agmsg: not registered yet - using {fallback!r}. Run `agmsg register` once.",
+    print(f"wagmsg: not registered yet - using {fallback!r}. Run `wagmsg register` once.",
           file=sys.stderr)
     return fallback
 
@@ -69,26 +69,26 @@ def nudge(to: str, subject: str, message_id: str, sender: str) -> bool:
     if done.returncode == 0:
         print(f"nudged {to}: {done.stdout.strip()}")
         return True
-    print(f"agmsg: message is filed but the nudge failed: {done.stderr.strip()}", file=sys.stderr)
+    print(f"wagmsg: message is filed but the nudge failed: {done.stderr.strip()}", file=sys.stderr)
     return False
 
 
 # --- commands -------------------------------------------------------------------------------
 
 def live_panes() -> dict[str, dict]:
-    """Every open pane id -> the session holding it. Raises when agwinterm is unreachable."""
-    import agw
+    """Every open pane id -> the session holding it. Raises when WagTerm is unreachable."""
+    import wag
     out: dict[str, dict] = {}
-    snapshot = agw.tree()
-    for _, session in agw.sessions(snapshot):
-        for pane in agw.panes_of(session):
+    snapshot = wag.tree()
+    for _, session in wag.sessions(snapshot):
+        for pane in wag.panes_of(session):
             out[pane] = session
     return out
 
 
 def cmd_register(args: argparse.Namespace) -> int:
     if args.pane and not args.tool:
-        print("agmsg: registering a box for another pane needs --tool", file=sys.stderr)
+        print("wagmsg: registering a box for another pane needs --tool", file=sys.stderr)
         return 1
     entry = hub.register(args.box, tool=args.tool, role=args.role, note=args.note,
                          cwd=args.cwd, pane=args.pane)
@@ -99,7 +99,7 @@ def cmd_register(args: argparse.Namespace) -> int:
 def cmd_whoami(args: argparse.Namespace) -> int:
     entry = hub.whoami()
     if not entry:
-        print(f"not registered. `agmsg register` would claim the box {hub.default_box()!r}.")
+        print(f"not registered. `wagmsg register` would claim the box {hub.default_box()!r}.")
         return 1
     print(json.dumps(entry, indent=2))
     return 0
@@ -111,9 +111,9 @@ def cmd_agents(args: argparse.Namespace) -> int:
     reachable = True
     try:
         live = live_panes()
-    except Exception as err:  # agwinterm not running: still list the registry
+    except Exception as err:  # wagterm not running: still list the registry
         reachable = False
-        print(f"(agwinterm not reachable: {err})", file=sys.stderr)
+        print(f"(wagterm not reachable: {err})", file=sys.stderr)
     if args.json:
         # pane_open is null, not false, when the terminal could not be asked. An unreachable
         # terminal means unknown, not gone - the same rule `sweep` obeys - and a machine consumer
@@ -124,7 +124,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
                          indent=2, sort_keys=True))
         return 0
     if not registry:
-        print("no agents registered yet - each one should run `agmsg register`.")
+        print("no agents registered yet - each one should run `wagmsg register`.")
         return 0
     print(f"{'BOX':22} {'TOOL':7} {'ROLE':17} {'PANE':8} {'STATUS':10} {'UNREAD':>6}  SEEN  CWD")
     for box in sorted(registry):
@@ -151,16 +151,16 @@ def cmd_send(args: argparse.Namespace) -> int:
     hub.touch(sender)
     body = body_from(args).strip()
     if not body:
-        print("agmsg: empty message body", file=sys.stderr)
+        print("wagmsg: empty message body", file=sys.stderr)
         return 1
     targets = [b for b in hub.boxes() if b != sender] if args.to == "all" else [args.to]
     if not targets:
-        print("agmsg: no recipients", file=sys.stderr)
+        print("wagmsg: no recipients", file=sys.stderr)
         return 1
     failures = 0
     for target in targets:
         if args.to != "all" and not hub.lookup(target):
-            print(f"agmsg: {target!r} is not a registered box. `agmsg agents` lists them; "
+            print(f"wagmsg: {target!r} is not a registered box. `wagmsg agents` lists them; "
                   f"pass --force to file it anyway.", file=sys.stderr)
             if not args.force:
                 return 1
@@ -196,7 +196,7 @@ def cmd_read(args: argparse.Namespace) -> int:
     if args.id:
         path = hub.find_message(box, args.id)
         if not path:
-            print(f"agmsg: no message {args.id!r} in {box}", file=sys.stderr)
+            print(f"wagmsg: no message {args.id!r} in {box}", file=sys.stderr)
             return 1
     else:
         pending = hub.unread(box)
@@ -226,7 +226,7 @@ def cmd_reply(args: argparse.Namespace) -> int:
     box = me(create=True)
     path = hub.find_message(box, args.id)
     if not path:
-        print(f"agmsg: no message {args.id!r} in {box}", file=sys.stderr)
+        print(f"wagmsg: no message {args.id!r} in {box}", file=sys.stderr)
         return 1
     original = hub.parse_message(path)
     args.to = original.get("from", "")
@@ -242,7 +242,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
     box = args.box or me()
     path = hub.find_message(box, args.id)
     if not path:
-        print(f"agmsg: no message {args.id!r} in {box}", file=sys.stderr)
+        print(f"wagmsg: no message {args.id!r} in {box}", file=sys.stderr)
         return 1
     target = hub.box_dir(box) / "archive" / path.name
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -267,11 +267,11 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     try:
         live = live_panes()
     except Exception as err:
-        print(f"agmsg: agwinterm is unreachable ({err}) - a terminal that is not running is not "
+        print(f"wagmsg: WagTerm is unreachable ({err}) - a terminal that is not running is not "
               f"evidence that a pane is gone, so nothing was changed.", file=sys.stderr)
         return 1
     if not live:
-        print("agmsg: no open panes reported - refusing to sweep the whole registry.",
+        print("wagmsg: no open panes reported - refusing to sweep the whole registry.",
               file=sys.stderr)
         return 1
     report = hub.sweep(live, prune=args.prune, dry_run=args.dry_run)
@@ -297,27 +297,27 @@ def cmd_sweep(args: argparse.Namespace) -> int:
 def cmd_peek(args: argparse.Namespace) -> int:
     """Read what another agent's pane is showing. Reads only - it types nothing and changes
     nothing, so it is always safe, including while that agent is mid-turn or on a dialog."""
-    import agw
+    import wag
     pane = args.pane
     if not pane:
         entry = hub.lookup(args.box) if args.box else None
         if entry:
             pane = entry.get("pane")
         elif args.box:
-            print(f"agmsg: {args.box!r} is not a registered box", file=sys.stderr)
+            print(f"wagmsg: {args.box!r} is not a registered box", file=sys.stderr)
             return 1
         else:  # no target: the other pane of my own split
-            mine = agw.my_pane()
-            located = agw.find_pane(mine, agw.tree()) if mine else None
+            mine = wag.my_pane()
+            located = wag.find_pane(mine, wag.tree()) if mine else None
             if not located:
-                print("agmsg: no pane to peek at - pass --box or --pane", file=sys.stderr)
+                print("wagmsg: no pane to peek at - pass --box or --pane", file=sys.stderr)
                 return 1
-            others = [x for x in agw.panes_of(located[1]) if x != mine]
+            others = [x for x in wag.panes_of(located[1]) if x != mine]
             if len(others) != 1:
-                print(f"agmsg: {len(others)} peer panes here - pass --pane", file=sys.stderr)
+                print(f"wagmsg: {len(others)} peer panes here - pass --pane", file=sys.stderr)
                 return 1
             pane = others[0]
-    text = agw.pane_text(pane)
+    text = wag.pane_text(pane)
     lines = text.splitlines()
     if args.lines > 0:
         lines = lines[-args.lines:]
@@ -330,28 +330,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"tool:       {hub.detect_tool()}")
     print(f"box:        {(hub.whoami() or {}).get('box') or '(unregistered, would be ' + hub.default_box() + ')'}")
     try:
-        import agw
-        print(f"agwinterm:  {agw.version()}")
-        pane = agw.my_pane()
+        import wag
+        print(f"wagterm:  {wag.version()}")
+        pane = wag.my_pane()
         print(f"my pane:    {pane}")
-        located = agw.find_pane(pane, agw.tree()) if pane else None
+        located = wag.find_pane(pane, wag.tree()) if pane else None
         if located:
             _, session, index = located
-            panes = agw.panes_of(session)
+            panes = wag.panes_of(session)
             print(f"session:    {session['name']} ({len(panes)} pane(s), I am #{index})")
             if len(panes) > 1:
                 print(f"peer pane:  {[p for p in panes if p != pane][0]}")
             else:
                 print("peer pane:  none - no split, so there is nobody to chat with yet")
     except Exception as err:
-        print(f"agwinterm:  unreachable ({err})")
+        print(f"wagterm:  unreachable ({err})")
     registry = hub.load_registry()["agents"]
     print(f"registered: {', '.join(sorted(registry)) or '(none)'}")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agmsg", description="inbox for the agents on this machine")
+    parser = argparse.ArgumentParser(prog="wagmsg", description="inbox for the agents on this machine")
     subs = parser.add_subparsers(dest="command", required=True)
 
     p = subs.add_parser("register", help="claim a box for this agent")
@@ -442,7 +442,7 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except (ValueError, OSError) as err:
-        print(f"agmsg: {err}", file=sys.stderr)
+        print(f"wagmsg: {err}", file=sys.stderr)
         return 1
 
 

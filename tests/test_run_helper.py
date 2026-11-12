@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 
-import agw  # noqa: E402
+import wag  # noqa: E402
 import closer  # noqa: E402
 import hub  # noqa: E402
 import run_helper  # noqa: E402
@@ -40,15 +40,15 @@ def kill(pid):
 class Wrapper(unittest.TestCase):
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test run helper ' + uuid.uuid4().hex)
-        self.hub_dir = self.folder / '.workbench'
+        self.hub_dir = self.folder / '.wagflow'
         self.hub_dir.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder, True)
         self.addCleanup(hub.reload_paths)
-        self.enterContext(patch.dict(os.environ, {'AGWINTERM_PANE_ID': 'helper-1', 'AI_HUB': str(self.hub_dir)}))
+        self.enterContext(patch.dict(os.environ, {'WAGTERM_PANE_ID': 'helper-1', 'AI_HUB': str(self.hub_dir)}))
         self.screen = io.StringIO()
         # The pane shows what the wrapper printed: the marker's rows are read from it.
-        self.enterContext(patch.object(agw, 'pane_text', side_effect=lambda pane: self.screen.getvalue()))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('real terminal request')))
+        self.enterContext(patch.object(wag, 'pane_text', side_effect=lambda pane: self.screen.getvalue()))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('real terminal request')))
 
     def run_wrapper(self, *command, label='abc1234', to=None):
         argv = ['--hub', str(self.hub_dir), '--label', label, *(['--to', to] if to else []), '--', *command]
@@ -275,9 +275,9 @@ class SuiteCommand(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb suite ' + uuid.uuid4().hex)
-        (self.folder / '.workbench/state').mkdir(parents=True)
+        (self.folder / '.wagflow/state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder, True)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench')}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow')}))
         os.environ.pop('AI_BOX', None)
         self.opened = self.enterContext(patch.object(wb, 'open_session', return_value='sid'))
         self.enterContext(patch.object(wb, 'issue_number', return_value='45'))
@@ -297,9 +297,9 @@ class SuiteCommand(unittest.TestCase):
         name, cwd, argv = self.opened.call_args.args
         self.assertEqual(('#45 suite 1f04542', self.folder.resolve(), False),
                          (name, cwd, self.opened.call_args.kwargs['select']))
-        args_file = self.folder.resolve() / '.workbench' / 'state' / 'helpers' / 'launch-suite-1f04542.json'
+        args_file = self.folder.resolve() / '.wagflow' / 'state' / 'helpers' / 'launch-suite-1f04542.json'
         self.assertEqual([str(wb.HERE / 'run_helper.py'), '--args-file', str(args_file)], argv[1:])
-        self.assertEqual(['--hub', str(self.folder.resolve() / '.workbench'), '--label', '1f04542', '--to', 'claude',
+        self.assertEqual(['--hub', str(self.folder.resolve() / '.wagflow'), '--label', '1f04542', '--to', 'claude',
                           '--', 'python', '-m', 'unittest', 'discover', '-s', 'my tests'], self.launched())
         self.assertIn("mail from 'helper' to claude", self.out.getvalue())
 
@@ -339,11 +339,11 @@ class WaitingRecord(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb waiting ' + uuid.uuid4().hex)
-        (self.folder / '.workbench/state').mkdir(parents=True)
+        (self.folder / '.wagflow/state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder, True)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench')}))
-        self.set_status = self.enterContext(patch.object(agw, 'set_status'))
-        self.path = self.folder / '.workbench/state/waiting.json'
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow')}))
+        self.set_status = self.enterContext(patch.object(wag, 'set_status'))
+        self.path = self.folder / '.wagflow/state/waiting.json'
 
     def wb(self, *argv):
         with patch.object(sys, 'argv', ['wb.py', *argv]), contextlib.redirect_stdout(io.StringIO()):
@@ -369,7 +369,7 @@ class WaitingRecord(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
     def test_it_is_written_even_when_the_terminal_is_unreachable(self):
-        self.set_status.side_effect = agw.CtlError('no pipe')
+        self.set_status.side_effect = wag.CtlError('no pipe')
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(1, self.wb('status', 'blocked'))
         self.assertTrue(self.path.exists())

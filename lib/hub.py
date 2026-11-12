@@ -1,6 +1,6 @@
 # Vendored from the ai-hub tooling (MIT, same author). Kept close to the original on purpose:
 # it is the tested half of this project - see tests/ there and here.
-"""The mailbox: agent registry + file-backed inbox, rooted at AI_HUB (the workbench's .workbench/).
+"""The mailbox: agent registry + file-backed inbox, rooted at AI_HUB (the WagFlow's .wagflow/).
 
 Two agents that can type into each other's panes still need somewhere durable to put anything
 longer than one line - a review, a diff, a list of findings. The pane is the doorbell; this is
@@ -105,7 +105,7 @@ def default_box(tool: str | None = None, cwd: str | None = None) -> str:
 def whoami() -> dict[str, Any] | None:
     """This process's own registry entry, matched on AI_BOX first, then pane id."""
     registry = load_registry()["agents"]
-    pane = os.environ.get("AGWINTERM_PANE_ID") or os.environ.get("AGWINTERM_SESSION_ID")
+    pane = os.environ.get("WAGTERM_PANE_ID") or os.environ.get("WAGTERM_SESSION_ID")
     named = os.environ.get("AI_BOX")
     if named and named in registry:
         return registry[named]
@@ -133,12 +133,12 @@ def register(box: str | None = None, *, tool: str | None = None, role: str | Non
         "box": box,
         "tool": tool,
         "cwd": cwd,
-        "pane": pane or os.environ.get("AGWINTERM_PANE_ID") or os.environ.get("AGWINTERM_SESSION_ID"),
+        "pane": pane or os.environ.get("WAGTERM_PANE_ID") or os.environ.get("WAGTERM_SESSION_ID"),
         # Only from the environment. Registering FOR another pane knows that pane's id and not
         # the session that holds it, and storing the pane id here would put one kind of id under a
         # key docs/protocol.md documents as another.
-        "session": None if pane else os.environ.get("AGWINTERM_SESSION_ID"),
-        "window": os.environ.get("AGWINTERM_WINDOW_ID"),
+        "session": None if pane else os.environ.get("WAGTERM_SESSION_ID"),
+        "window": os.environ.get("WAGTERM_WINDOW_ID"),
         "pid": None if pane else os.getpid(),
         "last_seen": now_iso(),
     })
@@ -235,7 +235,7 @@ def sweep(live_panes, *, prune: bool = False, dry_run: bool = False) -> dict[str
 
 def box_dir(box: str) -> Path:
     """The mailbox directory for a box. Validated HERE, not only in register(): every write path
-    reaches the filesystem through this function, and `agmsg send --force --to ..` would otherwise
+    reaches the filesystem through this function, and `wagmsg send --force --to ..` would otherwise
     put a file wherever the name pointed."""
     if not BOX_RE.match(box):
         raise ValueError(f"bad box name {box!r}: use lowercase letters, digits, . _ -")

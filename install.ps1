@@ -1,29 +1,29 @@
 <#
 .SYNOPSIS
-  Install agworkbench and everything it needs. Safe to re-run: each step checks before it acts.
+  Install WagFlow and its tools. Install WagTerm first. Safe to re-run: each step checks before it acts.
 
 .DESCRIPTION
   Tools (skipped with -SkipTools), installing only what is missing:
-    git, gh, python, node, go            via scoop
-    agwinterm                            via scoop, from github.com/yeroo/scoop-bucket,
-                                         plus its own agent skill and status hooks
+    git, gh, python, node, go              via scoop
+    WagTerm                              must already be installed from github.com/msize/wagterm,
+                                         then its own agent skill and status hooks are installed
     Claude Code                          via its official installer
     Codex CLI                            via npm
     revmux, revdiff                      via go install (neither ships a Windows binary)
 
-  Then the workbench itself:
-    ~/.claude/commands/start-github-issue.md     the /start-github-issue slash command
-    ~/.claude/commands/workbench-implementer.md  Claude's side of the loop when "implementer" is "claude"
-    ~/.claude/commands/triage-issue.md           the issue triage judgment (-Triage)
-    ~/.codex/skills/workbench-implementer/       Codex's side of the loop
-    this folder on your user PATH                so `github-workbench` works in cmd and PowerShell
-    github-workbench.ps1 in this folder           PowerShell's entry point (when it may run local scripts)
-    ~/.agworkbench.json                          created with defaults if it does not exist
+  Then WagFlow itself:
+    ~/.claude/commands/wagflow-start.md          the /wagflow-start slash command
+    ~/.claude/commands/wagflow-implementer.md    Claude's side of the loop when "implementer" is "claude"
+    ~/.claude/commands/wagflow-triage.md         the issue triage judgment (-Triage)
+    ~/.codex/skills/wagflow-implementer/         Codex's side of the loop
+    this folder on your user PATH                so `wagflow` works in cmd and PowerShell
+    wagflow.ps1 in this folder                   PowerShell's entry point (when it may run local scripts)
+    ~/.wagflow.json                              created with defaults if it does not exist
 
   Anything that installs software asks first, unless you pass -Yes.
 
 .PARAMETER Bypass
-  Start Claude with --dangerously-skip-permissions in workbench sessions. Without it Claude asks
+  Start Claude with --dangerously-skip-permissions in WagFlow sessions. Without it Claude asks
   before each shell command, and the loop stops at every one of them. Codex is sandboxed either way.
 
 .EXAMPLE
@@ -34,7 +34,7 @@
 param([switch] $Yes, [switch] $SkipTools, [switch] $Bypass)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'lib\Workbench.ps1')
+. (Join-Path $PSScriptRoot 'lib\WagFlow.Common.ps1')
 
 function Confirm-Step([string] $Question) {
     if ($Yes) { return $true }
@@ -85,18 +85,19 @@ function Add-UserPath([string] $Dir) {
     Write-Done "added to your PATH: $Dir"
 }
 
-Write-Host "agworkbench install" -ForegroundColor Cyan
+Write-Host "WagFlow install" -ForegroundColor Cyan
 
 # --- tools -----------------------------------------------------------------------------------
 if (-not $SkipTools) {
+    Assert-WagTermInstalled
     Install-WithScoop git git
     Install-WithScoop gh gh
     Install-WithScoop python python
     Install-WithScoop node nodejs-lts
     Install-WithScoop go go
 
-    if (Get-AgwintermCtl) { Write-Done "agwinterm present" } else { Install-Agwinterm -Yes:$Yes }
-    Install-AgwintermIntegrations
+    Write-Done "WagTerm present"
+    Install-WagtermIntegrations
 
     if (Test-Tool claude) { Write-Done "claude present" }
     elseif (Confirm-Step "Claude Code is missing. Run its official installer (claude.ai/install.ps1)?") {
@@ -113,18 +114,26 @@ if (-not $SkipTools) {
 
     if (Test-Tool gh) {
         & gh auth status *> $null
-        if ($LASTEXITCODE -ne 0) { Write-Warning "gh is not logged in: run 'gh auth login' before using the workbench" }
+        if ($LASTEXITCODE -ne 0) { Write-Warning "gh is not logged in: run 'gh auth login' before using WagFlow" }
     }
 }
 
-# --- the workbench ---------------------------------------------------------------------------
+# --- the WagFlow ---------------------------------------------------------------------------
 $claudeCommands = Join-Path $HOME '.claude\commands'
 New-Item -ItemType Directory -Force -Path $claudeCommands | Out-Null
-Copy-Item -Force -Path (Join-Path $PSScriptRoot 'claude\commands\*.md') -Destination $claudeCommands
-Write-Done "claude: /start-github-issue and /workbench-implementer installed"
+$commands = @{
+    'start-github-issue.md' = 'wagflow-start.md'
+    'triage-issue.md' = 'wagflow-triage.md'
+    'wagflow-implementer.md' = 'wagflow-implementer.md'
+}
+foreach ($source in $commands.Keys) {
+    Copy-Item -Force -LiteralPath (Join-Path $PSScriptRoot "claude\commands\$source") -Destination (Join-Path $claudeCommands $commands[$source])
+}
+Write-Done "claude: /wagflow-start, /wagflow-triage and /wagflow-implementer installed"
 
 $codexSkills = Join-Path $HOME '.codex\skills'
 foreach ($skill in Get-ChildItem -Directory (Join-Path $PSScriptRoot 'codex\skills')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $skill.FullName 'SKILL.md'))) { continue }
     $target = Join-Path $codexSkills $skill.Name
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Copy-Item -Force -Path (Join-Path $skill.FullName '*') -Destination $target -Recurse
@@ -134,14 +143,14 @@ foreach ($skill in Get-ChildItem -Directory (Join-Path $PSScriptRoot 'codex\skil
 Add-UserPath $PSScriptRoot
 Install-PowerShellEntry $PSScriptRoot | Out-Null
 
-$configPath = Join-Path $HOME '.agworkbench.json'
+$configPath = Join-Path $HOME '.wagflow.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
     $claudeArgs = @()
     if ($Bypass) { $claudeArgs = @('--dangerously-skip-permissions') }
     [ordered]@{
         claudeArgs   = $claudeArgs
         codexArgs    = @()
-        checkoutRoot = (Join-Path $HOME 'source\workbench')
+        checkoutRoot = (Join-Path $HOME 'source\wagflow')
         allowNetwork = $false
     } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
     Write-Done "config written: $configPath"
@@ -150,4 +159,4 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 }
 
 Write-Host ""
-Write-Host "Done. Open a new terminal (for PATH), then:  github-workbench <owner/repo#issue>" -ForegroundColor Cyan
+Write-Host "Done. Open a new terminal (for PATH), then:  wagflow <owner/repo#issue>" -ForegroundColor Cyan

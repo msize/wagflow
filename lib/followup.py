@@ -34,10 +34,10 @@ SEVERITY_PRIORITY = {"blocker": "P0", "major": "P1", "minor": "P2", "immaterial"
 BODY_CAP = 2000
 MATCHER_TIMEOUT = triage.MODEL_TIMEOUT
 # Only the trailer counts (r2 m3): a finding may quote marker text, and it comes first in the body.
-FINDING_RE = re.compile(r"<!-- agworkbench:finding ([^>]*?) -->\r?\n" + re.escape(PLANNER_MARKER) + r"\s*\Z")
-DUP_RE = re.compile(r"<!-- agworkbench:dup ([^>]*?) -->\r?\n<!-- agworkbench:dup-count \d+ -->\r?\n"
+FINDING_RE = re.compile(r"<!-- wagflow:finding ([^>]*?) -->\r?\n" + re.escape(PLANNER_MARKER) + r"\s*\Z")
+DUP_RE = re.compile(r"<!-- wagflow:dup ([^>]*?) -->\r?\n<!-- wagflow:dup-count \d+ -->\r?\n"
                     + re.escape(PLANNER_MARKER) + r"\s*\Z")
-LEFTOVERS_RE = re.compile(r"<!-- agworkbench:leftovers ([^>]*?) -->\r?\n" + re.escape(PLANNER_MARKER) + r"\s*\Z")
+LEFTOVERS_RE = re.compile(r"<!-- wagflow:leftovers ([^>]*?) -->\r?\n" + re.escape(PLANNER_MARKER) + r"\s*\Z")
 CHECKLIST_RE = re.compile(r"^- \[([ xX])\] \*\*(.*?)\*\* \(.*?\): (.*)$", re.M)
 STRIP = string.punctuation + "‘’“”«»" + string.whitespace
 
@@ -87,13 +87,13 @@ def _parse(text: str) -> dict:
 
 
 def finding_marker(item: dict, source: int, pr: int | None) -> str:
-    return ("<!-- agworkbench:finding " + _fields(dict(
+    return ("<!-- wagflow:finding " + _fields(dict(
         source=source, pr=pr, round=round_of(item.get("origin")), key=item.get("key"),
         file=normalise_file(item.get("file")) or None)) + " -->")
 
 
 def dup_marker(item: dict, source: int, pr: int) -> str:
-    return "<!-- agworkbench:dup " + _fields(dict(source=source, pr=pr, round=round_of(item.get("origin")),
+    return "<!-- wagflow:dup " + _fields(dict(source=source, pr=pr, round=round_of(item.get("origin")),
                                                    key=item.get("key"))) + " -->"
 
 
@@ -177,8 +177,8 @@ def leftovers_body(items: list[dict], source: int, pr: int) -> str:
         if detail:
             lines += ["", detail]
     lines += ["", f"Source: #{source}, PR #{pr}", f"Severity: {leftovers_severity(items)}",
-              f"<!-- agworkbench:follow-up source=#{source} -->",
-              "<!-- agworkbench:leftovers " + _fields(dict(source=source, pr=pr)) + " -->",
+              f"<!-- wagflow:follow-up source=#{source} -->",
+              "<!-- wagflow:leftovers " + _fields(dict(source=source, pr=pr)) + " -->",
               PLANNER_MARKER]
     return "\n".join(lines) + "\n"
 
@@ -462,7 +462,7 @@ def semantic_matches(items: list[dict], candidates: list[dict], note) -> dict[st
                            "file": normalise_file(i.get("file")) or None} for i in items],
              "candidates": [{"number": c["number"], "title": c["title"], "body": c["body"][:BODY_CAP],
                              "labels": c["labels"]} for c in candidates]}
-    folder = Path(tempfile.mkdtemp(prefix="agworkbench-followup-"))
+    folder = Path(tempfile.mkdtemp(prefix="wagflow-followup-"))
     try:
         facts_file = folder / "facts.json"
         facts_file.write_text(json.dumps(facts, indent=2), encoding="utf-8")

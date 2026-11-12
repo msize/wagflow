@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """run_helper - a long-running helper (the whole suite, a build) that finishes where agents can see it (#45).
 
-wb.py suite opens this in its own visible session, in agwinterm's direct mode:
+wb.py suite opens this in its own visible session, in WagTerm's direct mode:
 
-  python lib/run_helper.py --hub <checkout>\\.workbench --label 1f04542 --to claude -- python -m unittest discover -s tests
+  python lib/run_helper.py --hub <checkout>\\.wagflow --label 1f04542 --to claude -- python -m unittest discover -s tests
 
-wb.py passes those arguments in a file instead, `--args-file <checkout>\\.workbench\\state\\helpers\\launch-suite-<label>.json`
-(a JSON list), so the session's command line stays inside agwinterm's limits whatever the command is (#86).
+wb.py passes those arguments in a file instead, `--args-file <checkout>\\.wagflow\\state\\helpers\\launch-suite-<label>.json`
+(a JSON list), so the session's command line stays inside WagTerm's limits whatever the command is (#86).
 
 It runs the command with no shell around it (argv[0] resolved on PATH with PATHEXT; a `.ps1` gets
 `pwsh -File`, a `.cmd`/`.bat` shim such as npm or gradlew gets `cmd /d /s /c`), echoes its
-output to the pane, and writes it to `.workbench/review/suite-<label>.log` as UTF-8 without a BOM,
+output to the pane, and writes it to `.wagflow/review/suite-<label>.log` as UTF-8 without a BOM,
 whatever the child wrote: Windows PowerShell 5.1's `>` redirection wrote UTF-16, which a text match
 never sees. When the command ends it mails the result to `--to` (sender `helper`) - the relay rings
 that pane, so nobody depends on a private background watcher that low memory can kill - and, as its
@@ -238,7 +238,7 @@ def echo_to_pane(text: str) -> None:
 
 def read_args_file(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
     """`--args-file <file>`: the arguments as a JSON list, which wb.py suite writes so the session's
-    command line stays inside agwinterm's limits whatever the command is (#86)."""
+    command line stays inside WagTerm's limits whatever the command is (#86)."""
     if len(argv) != 2:
         parser.error("--args-file takes one file and nothing else")
     try:
@@ -258,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
             except (ValueError, OSError):
                 pass
     parser = argparse.ArgumentParser(prog="run_helper")
-    parser.add_argument("--hub", required=True, help="the workbench directory (.workbench)")
+    parser.add_argument("--hub", required=True, help="the WagFlow directory (.wagflow)")
     parser.add_argument("--label", required=True, help="names the log and the session, e.g. the head's short sha")
     parser.add_argument("--to", default="claude", help="the mailbox the result goes to (default claude)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command and its arguments")

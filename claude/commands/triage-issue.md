@@ -1,10 +1,10 @@
 ---
 description: Judge one product issue's priority (P0-P3) against the private spec repos; answers with JSON only
-argument-hint: <facts.json written by agworkbench's lib/triage.py>
+argument-hint: <facts.json written by WagFlow's lib/triage.py>
 ---
 
 You are triaging ONE issue of a public product repository against the product's private spec
-repositories. agworkbench's `lib/triage.py` gathered the facts and runs you headless; it validates
+repositories. WagFlow's `lib/triage.py` gathered the facts and runs you headless; it validates
 your answer and enforces the rules below itself, so answer honestly rather than strategically.
 
 ## Input

@@ -4,14 +4,14 @@ product's private spec repos (#34).
 
   python lib/triage.py run --repo yeroo/docxy [--retriage] [--follow-ups] [--limit 20] [--dry-run] [--issue N ...]
   python lib/triage.py watch --repo yeroo/docxy          # re-scan every 5 minutes (a visible session)
-  python lib/triage.py start-watch --repo yeroo/docxy    # open that session in agwinterm
+  python lib/triage.py start-watch --repo yeroo/docxy    # open that session in wagterm
 
-Configuration, local only (`~/.agworkbench.json`):
+Configuration, local only (`~/.wagflow.json`):
   "triage": {"yeroo/docxy": {"specRepos": ["yeroo/docxy-project-spec", ...], "model": "sonnet"}}
 
 How a decision is made:
 1. Facts, no model. Every configured spec repo that exists is read in full: its open issues
-   (title, body, labels) and a shallow cached clone (`~/.agworkbench/spec-cache`). A definite
+   (title, body, labels) and a shallow cached clone (`~/.wagflow/spec-cache`). A definite
    "not found" skips a spec repo with a note; any other failure stops the run before anything is
    written (FactsError): judging without the specs would under-prioritise everything. GitHub answers
    a private repo the gh account cannot read exactly like a missing one, so when NONE of the
@@ -73,9 +73,9 @@ PRIORITIES = ('P0', 'P1', 'P2', 'P3')
 # Admission rank (#34): untriaged sorts after P1 and before P2.
 RANK = {'P0': 0, 'P1': 1, None: 2, 'P2': 3, 'P3': 4}
 TRUSTED = {'OWNER', 'MEMBER', 'COLLABORATOR'}
-TRIAGE_MARKER = '<!-- agworkbench:triage -->'
-PLANNER_MARKER = '<!-- agworkbench:planner -->'
-LOG_MARKER = '<!-- agworkbench:triage-log -->'
+TRIAGE_MARKER = '<!-- wagflow:triage -->'
+PLANNER_MARKER = '<!-- wagflow:planner -->'
+LOG_MARKER = '<!-- wagflow:triage-log -->'
 LOG_TITLE = 'Triage log'
 REPO_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*'
 REF_RE = re.compile(rf'({REPO_RE})#([1-9][0-9]*)')
@@ -198,7 +198,7 @@ def label_names(issue) -> list[str]:
 
 def github_repo(url: str | None) -> str | None:
     """`owner/name` of a GitHub remote URL in https, ssh or scp form, with its case kept, else None.
-    One parser for the workbench's own repo (#71) and cleanup's origin check."""
+    One parser for the WagFlow's own repo (#71) and cleanup's origin check."""
     match = re.fullmatch(r'(?:https?://(?:[^@/]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)'
                          r'([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9][A-Za-z0-9_.-]*?)(?:\.git)?/?',
                          (url or '').strip(), re.I)
@@ -265,7 +265,7 @@ def remove_tree(path: Path) -> None:
 # --- configuration ---------------------------------------------------------------------------------
 
 def config_path() -> Path:
-    return Path(os.environ.get('AGWORKBENCH_CONFIG', Path.home() / '.agworkbench.json')).resolve()
+    return Path(os.environ.get('WAGFLOW_CONFIG', Path.home() / '.wagflow.json')).resolve()
 
 
 def bug_label_of(settings) -> str | None:
@@ -308,11 +308,11 @@ def load_config(path: Path, product: str) -> dict:
 
 
 def state_root() -> Path:
-    return Path(os.environ.get('AGWORKBENCH_TRIAGE_ROOT', Path.home() / '.agworkbench' / 'triage'))
+    return Path(os.environ.get('WAGFLOW_TRIAGE_ROOT', Path.home() / '.wagflow' / 'triage'))
 
 
 def cache_root() -> Path:
-    return Path(os.environ.get('AGWORKBENCH_SPEC_CACHE', Path.home() / '.agworkbench' / 'spec-cache'))
+    return Path(os.environ.get('WAGFLOW_SPEC_CACHE', Path.home() / '.wagflow' / 'spec-cache'))
 
 
 # --- the decision ----------------------------------------------------------------------------------
@@ -779,7 +779,7 @@ class Triage:
         """One comment on the private triage log, created in the first spec repo when absent."""
         repo = self.specs[0]['repo']
         if self.log_number is None:
-            body = (f'{LOG_MARKER}\nagworkbench triage decisions for {self.product}, one comment each: the '
+            body = (f'{LOG_MARKER}\nWagFlow triage decisions for {self.product}, one comment each: the '
                     'private rationale behind the public priority labels.\n')
             url = self.post(['issue', 'create', '--repo', repo, '--title', LOG_TITLE], body, what=f'creating the triage log in {repo}')
             match = re.search(r'/issues/([1-9][0-9]*)', url or '')
@@ -1070,15 +1070,15 @@ def prompt_text(facts_file: Path) -> str:
 
 
 def open_watch_session(product: str, limit: int) -> int:
-    import agw
+    import wag
     import conductor
     name = f'#triage {product}'
-    if any(session.get('name') == name for _, session in agw.sessions(agw.tree())):
+    if any(session.get('name') == name for _, session in wag.sessions(wag.tree())):
         print(f'{name} is already running')
         return 0
     line = '& ' + conductor.command_line([sys.executable, str(HERE / 'triage.py'), 'watch', '--repo', product,
                                           '--limit', str(limit)])
-    session = agw.request('session.new', args={'name': name, 'cwd': str(HERE.parent), 'command': line})
+    session = wag.request('session.new', args={'name': name, 'cwd': str(HERE.parent), 'command': line})
     print(f'{name} running in session {str(session).split()[0] if session else "?"}')
     return 0
 
@@ -1111,14 +1111,14 @@ def main(argv=None) -> int:
             raise ConfigError('--limit must not be negative')
         config = load_config(config_path(), args.repo)
         if args.command == 'start-watch':
-            if os.environ.get('AGWINTERM_ENABLED') != '1':
-                raise ConfigError('-Triage -Watch requires running inside agwinterm')
+            if os.environ.get('WAGTERM_ENABLED') != '1':
+                raise ConfigError('-Triage -Watch requires running inside wagterm')
             return open_watch_session(args.repo, args.limit)
 
         def notify(message):
             try:
-                import agw
-                agw.notify(agw.my_pane() or 'active', message, title='Workbench triage')
+                import wag
+                wag.notify(wag.my_pane() or 'active', message, title='WagFlow triage')
             except Exception as err:            # a notification never stops triage
                 print(f'notification failed: {err}', flush=True)
 

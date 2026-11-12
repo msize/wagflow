@@ -24,7 +24,7 @@ class HelperScripts(unittest.TestCase):
     def setUp(self):
         self.folder = ROOT / ('test helper scripts ' + uuid.uuid4().hex)
         self.checkout = self.folder / 'checkout'
-        (self.checkout / '.workbench').mkdir(parents=True)
+        (self.checkout / '.wagflow').mkdir(parents=True)
         self.bin = self.folder / 'bin'
         self.bin.mkdir()
         self.addCleanup(shutil.rmtree, self.folder, True)
@@ -32,19 +32,19 @@ class HelperScripts(unittest.TestCase):
 
     def run_script(self, script, *params, pane=None):
         env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get('PATH', ''))
-        for name in ('AGWINTERM_PANE_ID', 'AGWINTERM_SESSION_ID'):
+        for name in ('WAGTERM_PANE_ID', 'WAGTERM_SESSION_ID'):
             env.pop(name, None)                          # no pane: no marker, nothing else changes
         if pane:
             # A pane id writes the marker; no terminal answers, so its rows are empty.
-            env.update(AGWINTERM_PANE_ID=pane, AGWINTERM_PIPE='agw-test-' + uuid.uuid4().hex,
-                       AGWINTERMCTL=str(self.folder / 'no-agwintermctl.exe'))
+            env.update(WAGTERM_PANE_ID=pane, WAGTERM_PIPE='wag-test-' + uuid.uuid4().hex,
+                       WAGTERMCTL=str(self.folder / 'no-wagtermctl.exe'))
         return subprocess.run([PWSH, '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'lib' / script),
                                '-Checkout', str(self.checkout), *params],
                               capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120, env=env)
 
     def mails(self):
-        os.environ['AI_HUB'] = str(self.checkout / '.workbench')
-        return [hub.parse_message(path) for path in sorted((self.checkout / '.workbench' / 'inbox' / 'claude').glob('*.md'))]
+        os.environ['AI_HUB'] = str(self.checkout / '.wagflow')
+        return [hub.parse_message(path) for path in sorted((self.checkout / '.wagflow' / 'inbox' / 'claude').glob('*.md'))]
 
     def test_a_revmux_round_that_fails_mails_the_planner(self):
         (self.bin / 'revmux.cmd').write_text('@echo revmux is broken\r\n@exit /b 3\r\n', encoding='utf-8')
@@ -81,7 +81,7 @@ class HelperScripts(unittest.TestCase):
         scope.write_text('scope', encoding='utf-8')
         done = self.run_script('run-revmux.ps1', '-ScopeFile', str(scope), '-Round', '2', '-Profile', 'kimi-mixed')
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
-        record = json.loads((self.checkout / '.workbench/review/revmux-r2.json').read_text(encoding='utf-8-sig'))
+        record = json.loads((self.checkout / '.wagflow/review/revmux-r2.json').read_text(encoding='utf-8-sig'))
         self.assertEqual({'run': 'r2', 'dir': str(self.folder / 'tasks' / 'r2'), 'profile': 'kimi-mixed', 'attempt': 0,
                           'scope': str(scope)}, record)
         [mail] = self.mails()
@@ -94,17 +94,17 @@ class HelperScripts(unittest.TestCase):
         done = self.run_script('run-revmux.ps1', '-ScopeFile', str(scope), '-Round', '2', '-Run', 'r2-1', '-Attempt', '1')
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
         calls = (self.folder / 'calls.txt').read_text(encoding='utf-8').splitlines()
-        self.assertIn('new --task workbench --run r2-1', calls)
-        self.assertTrue(any(call.startswith('--task workbench --run r2-1 ') for call in calls), calls)
-        record = json.loads((self.checkout / '.workbench/review/revmux-r2.json').read_text(encoding='utf-8-sig'))
+        self.assertIn('new --task wagflow --run r2-1', calls)
+        self.assertTrue(any(call.startswith('--task wagflow --run r2-1 ') for call in calls), calls)
+        record = json.loads((self.checkout / '.wagflow/review/revmux-r2.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(('r2-1', 1), (record['run'], record['attempt']))
-        self.assertTrue((self.checkout / '.workbench/review/revmux-r2.md').exists())
+        self.assertTrue((self.checkout / '.wagflow/review/revmux-r2.md').exists())
 
     def marker(self, pane):
-        return json.loads((self.checkout / '.workbench' / 'state' / 'helpers' / f'{pane}.done').read_text(encoding='utf-8'))
+        return json.loads((self.checkout / '.wagflow' / 'state' / 'helpers' / f'{pane}.done').read_text(encoding='utf-8'))
 
     def mail_ids(self):
-        return [path.stem for path in sorted((self.checkout / '.workbench' / 'inbox' / 'claude').glob('*.md'))]
+        return [path.stem for path in sorted((self.checkout / '.wagflow' / 'inbox' / 'claude').glob('*.md'))]
 
     def test_the_marker_names_the_posted_report(self):
         # #84: the relay closes the session once this mail has been read.
@@ -150,7 +150,7 @@ class HelperScripts(unittest.TestCase):
 
     def test_a_review_that_fails_mails_the_planner(self):
         (self.bin / 'revdiff.ps1').write_text("throw 'revdiff crashed'\n", encoding='utf-8')
-        done = self.run_script('human-review.ps1', '-Base', 'origin/main')
+        done = self.run_script('human-review.ps1', '-Base', 'origin/master')
         self.assertNotEqual(0, done.returncode)
         [mail] = self.mails()
         self.assertEqual(('helper', 'note'), (mail['from'], mail['kind']))
@@ -159,7 +159,7 @@ class HelperScripts(unittest.TestCase):
 
     def review(self, stub):
         (self.bin / 'revdiff.cmd').write_text(stub, encoding='utf-8')
-        done = self.run_script('human-review.ps1', '-Base', 'origin/main')
+        done = self.run_script('human-review.ps1', '-Base', 'origin/master')
         return done, [(mail['from'], mail['subject']) for mail in self.mails()]
 
     def test_a_failed_revdiff_with_no_output_is_not_no_annotations(self):

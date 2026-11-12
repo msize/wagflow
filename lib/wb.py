@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""wb - open the workbench's visible helper sessions without composing terminal commands by hand.
+"""wb - open the WagFlow's visible helper sessions without composing terminal commands by hand.
 
-  wb.py revmux --round 1 --scope .workbench/review/scope-r1.md    # review round, own session
-  wb.py human-review --base origin/main                          # revdiff, selected, for the human
+  wb.py revmux --round 1 --scope .wagflow/review/scope-r1.md    # review round, own session
+  wb.py human-review --base origin/master                        # revdiff, selected, for the human
   wb.py suite --label 1f04542 -- python -m unittest discover -s tests   # the whole suite, own session (#45)
   wb.py status blocked --sound                                    # this pane's sidebar status
   wb.py wait-mail                                                 # background inbox waiter
@@ -26,8 +26,8 @@
   wb.py ci-log --pr 12                                            # the failed jobs' log for a FIX round (#32)
 
 Why a helper: Claude's shell is Git Bash, where $PWD is a POSIX path (/c/Users/...) that PowerShell
-cannot use, and quoting a PowerShell command inside a bash string inside an agwintermctl argument
-is three quoting languages deep. Everything here is derived from AI_HUB, which the workbench set.
+cannot use, and quoting a PowerShell command inside a bash string inside a WagTermctl argument
+is three quoting languages deep. Everything here is derived from AI_HUB, which the WagFlow set.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from urllib.parse import quote
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import agw  # noqa: E402
+import wag  # noqa: E402
 import followup  # noqa: E402
 import hub  # noqa: E402
 import limits  # noqa: E402
@@ -57,7 +57,7 @@ import triage  # noqa: E402
 def checkout() -> Path:
     hub = os.environ.get("AI_HUB")
     if not hub:
-        raise SystemExit("wb: AI_HUB is not set - run this inside an agworkbench pane")
+        raise SystemExit("wb: AI_HUB is not set - run this inside a WagFlow pane")
     return Path(hub).resolve().parent
 
 
@@ -72,7 +72,7 @@ def issue_number(root: Path, branch: str | None = None) -> str:
     return match.group(1) if match else "?"
 
 
-# agwinterm's limits on a direct-mode session.new command (Agwinterm.Pty/SessionCommand.cs, shared with
+# WagTerm's limits on a direct-mode session.new command (Wagterm.Pty/SessionCommand.cs, shared with
 # Lite's session_command.h): the app under 260 UTF-8 bytes, at most 16 arguments after it, each under
 # 2048 bytes. Past them the host creates nothing (#86).
 HOST_APP_BYTES, HOST_ARGS, HOST_ARG_BYTES = 260, 16, 2048
@@ -84,7 +84,7 @@ def utf8_size(text: str) -> int:
 
 
 def fits_host(argv: list[str]) -> str | None:
-    """Why agwinterm would refuse this argv as a session command, or None when it fits."""
+    """Why wagterm would refuse this argv as a session command, or None when it fits."""
     if not argv:
         return "no command"
     if utf8_size(argv[0]) >= HOST_APP_BYTES:
@@ -100,7 +100,7 @@ def fits_host(argv: list[str]) -> str | None:
 def launch_file(root: Path, name: str) -> Path:
     """Where a helper's launch file goes: beside the helpers' .done markers, which are the only
     files there anything globs."""
-    directory = root / ".workbench" / "state" / "helpers"
+    directory = root / ".wagflow" / "state" / "helpers"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / name
 
@@ -112,7 +112,7 @@ def ps_quote(value: str) -> str:
 
 
 def pane_command(root: Path, tag: str, script: str, **params: str) -> list[str]:
-    """A helper's command for agwinterm's direct mode: no shell around it (#33). When the helper
+    """A helper's command for WagTerm's direct mode: no shell around it (#33). When the helper
     ends, its pane stays on screen with its input closed, so the close can prove it untouched
     (closer.py). The parameters go into a launch file, so the command stays short whatever they
     are (#86): still one PowerShell process, the launcher calling the script."""
@@ -138,10 +138,10 @@ def helper_command(root: Path, tag: str, script: str, *args: str) -> list[str]:
 def open_session(name: str, cwd: Path, argv: list[str], select: bool) -> str:
     refusal = fits_host(argv)
     if refusal:
-        raise SystemExit(f"wb: helper command exceeds agwinterm's session.new limits ({HOST_LIMITS}): {refusal}")
+        raise SystemExit(f"wb: helper command exceeds WagTerm's session.new limits ({HOST_LIMITS}): {refusal}")
     args = {"name": name, "cwd": str(cwd), "command": subprocess.list2cmdline(argv), "command-mode": "direct"}
-    pane = agw.my_pane()
-    found = agw.find_pane(pane, agw.tree()) if pane else None
+    pane = wag.my_pane()
+    found = wag.find_pane(pane, wag.tree()) if pane else None
     workspace = found[0].get('id') if found else None
     if workspace:
         args['workspace'] = workspace
@@ -149,7 +149,7 @@ def open_session(name: str, cwd: Path, argv: list[str], select: bool) -> str:
         print('wb: caller workspace not found; opening helper in the active workspace', file=sys.stderr)
     if not select:
         args["no-select"] = True
-    result = agw.request("session.new", args=args)
+    result = wag.request("session.new", args=args)
     return str(result).split()[0] if result else ""
 
 
@@ -173,7 +173,7 @@ def cmd_revmux(args: argparse.Namespace) -> int:
         # A round a reviewer's usage limit stopped (#77): same K, a new revmux run name - revmux refuses a
         # round that has already run - and the limited report kept beside it. The attempt counts every
         # limited file, so a rerun that died before its report still gets a fresh run name.
-        review = root / ".workbench" / "review"
+        review = root / ".wagflow" / "review"
         report = review / f"revmux-r{args.round}.md"
         earlier = [int(match[1]) for path in review.glob(f"revmux-r{args.round}-limited-*")
                    if (match := re.fullmatch(rf"revmux-r{args.round}-limited-(\d+)\.(?:md|json)", path.name))]
@@ -251,7 +251,7 @@ def cmd_suite(args: argparse.Namespace) -> int:
     to = args.to or os.environ.get("AI_BOX") or "claude"
     if not hub.BOX_RE.fullmatch(to):
         raise SystemExit(f"wb: --to is not a mailbox name: {to!r}")
-    hub_dir = root / ".workbench"
+    hub_dir = root / ".wagflow"
     line = helper_command(root, f"suite-{args.label}", "run_helper.py", "--hub", str(hub_dir), "--label", args.label, "--to", to, "--", *command)
     sid = open_session(f"#{issue_number(root)} suite {args.label}", root, line, select=False)
     print(f"suite {args.label} running in session {sid}; log: {hub_dir / 'review' / f'suite-{args.label}.log'}; "
@@ -260,11 +260,11 @@ def cmd_suite(args: argparse.Namespace) -> int:
 
 
 def waiting_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "waiting.json"
+    return root / ".wagflow" / "state" / "waiting.json"
 
 
 def set_waiting(root: Path, waiting: bool) -> None:
-    """The durable "waiting on the human" record (#45). The sidebar status cannot be it: agwinterm's
+    """The durable "waiting on the human" record (#45). The sidebar status cannot be it: wagterm's
     agent hooks rewrite that on every turn (active, then completed at the end of it). The relay's stall
     watch is off while this file exists."""
     path = waiting_path(root)
@@ -279,7 +279,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     hub_dir = os.environ.get("AI_HUB")
     if hub_dir:
         set_waiting(Path(hub_dir).resolve().parent, args.state == "blocked")
-    agw.set_status(args.state, sound=args.sound, blink=args.sound)
+    wag.set_status(args.state, sound=args.sound, blink=args.sound)
     return 0
 
 
@@ -325,7 +325,7 @@ def cmd_loop_state(args: argparse.Namespace) -> int:
         write_loop_state(checkout(), args.state, args.pr, args.reason,
                          cause='environment' if getattr(args, 'environmental', False) else None)
         if args.state in ('resumed', 'pr-open'):
-            retire_no_pr_done(checkout() / '.workbench/state/loop-done.json')
+            retire_no_pr_done(checkout() / '.wagflow/state/loop-done.json')
         if args.state == 'resumed':
             set_waiting(checkout(), False)
         return 0
@@ -341,11 +341,11 @@ def cmd_wait_limit(args: argparse.Namespace) -> int:
     root = checkout()
     if checkout_settings(root)["onLimit"] != "wait":
         print("wb: wait-limit: this checkout fails over on a usage limit (onLimit is not wait): follow "
-              "start-github-issue.md, Usage limits, and run github-workbench.cmd <issue> -Failover",
+              "start-github-issue.md, Usage limits, and run wagflow.cmd <issue> -Failover",
               file=sys.stderr)
         return 1
     from conductor import atomic_json
-    path = root / ".workbench" / "state" / "limit-request.json"
+    path = root / ".wagflow" / "state" / "limit-request.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_json(path, {"box": args.box, "reason": args.reason, "at": time.time()})
     print(f"wb: wait-limit: the relay waits out {args.box}'s usage limit from its next check")
@@ -356,7 +356,7 @@ def checkout_settings(root: Path) -> dict:
     """The checkout's settings record (state/implementer.json, #20 and #23), parsed once. Missing or
     invalid keys read as their defaults: a record written before #23 has no autoMerge, and that is off."""
     try:
-        saved = json.loads((root / ".workbench" / "state" / "implementer.json").read_text(encoding="utf-8-sig"))
+        saved = json.loads((root / ".wagflow" / "state" / "implementer.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         saved = {}
     if not isinstance(saved, dict):
@@ -374,8 +374,8 @@ def checkout_settings(root: Path) -> dict:
 
 
 def failover_setting() -> bool:
-    """`failover` from ~/.agworkbench.json (#24): on unless the human set it to false."""
-    path = Path(os.environ.get("AGWORKBENCH_CONFIG") or (Path.home() / ".agworkbench.json"))
+    """`failover` from ~/.wagflow.json (#24): on unless the human set it to false."""
+    path = Path(os.environ.get("WAGFLOW_CONFIG") or (Path.home() / ".wagflow.json"))
     try:
         config = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -459,9 +459,9 @@ def cmd_handover(args: argparse.Namespace) -> int:
 # Read-only: state, reviews, holds and head are pure functions over what one `gh pr view` (plus the
 # PR's inline comments) returned, and - only for the tested head in an UNSTABLE or BLOCKED state -
 # what `gh pr checks` (all, and --required) returned (#32); mail and relay read this checkout's
-# .workbench. The planner merges only on "ok". When in doubt, hold: fail closed.
+# .wagflow. The planner merges only on "ok". When in doubt, hold: fail closed.
 
-PLANNER_MARKER = "<!-- agworkbench:planner -->"
+PLANNER_MARKER = "<!-- wagflow:planner -->"
 NEGATION = r"(?:do[\s-]*not|don'?t|dont)[\s-]*"
 HOLD_RE = re.compile(r"\b(?:hold|wait(?:ing)?|wip|" + NEGATION + r"merge|" +
                      NEGATION + r"(?:go[\s-]*ahead|resume|unhold))\b")
@@ -648,7 +648,7 @@ def check_mail(box: str = "claude") -> list[str]:
 
 def check_relay(root: Path, number: int) -> list[str]:
     try:
-        state = json.loads((root / ".workbench" / "state" / "relay.json").read_text(encoding="utf-8-sig"))
+        state = json.loads((root / ".wagflow" / "state" / "relay.json").read_text(encoding="utf-8-sig"))
         seen = number in (state.get("seen_open") or [])
     except (OSError, ValueError, AttributeError):
         seen = False
@@ -748,7 +748,7 @@ def review_decision(round_: int, severe: int, minor: int, degraded: bool, settin
 
 
 def review_rounds_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "review-rounds.json"
+    return root / ".wagflow" / "state" / "review-rounds.json"
 
 
 # --- the review cap (#75) ------------------------------------------------------------------------
@@ -760,7 +760,7 @@ BIG_LABELS = ("batch", "big")
 
 
 def review_big_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "review-big.json"
+    return root / ".wagflow" / "state" / "review-big.json"
 
 
 def issue_facts(root: Path) -> dict | None:
@@ -773,7 +773,7 @@ def issue_facts(root: Path) -> dict | None:
         done = subprocess.run(["git", "-C", str(root), "--git-dir", ".git", "remote", "get-url", "origin"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         if done.returncode != 0 or not triage.github_repo(done.stdout):
-            return None                # workbench_repo would exit 2 here; the cap only loses a source
+            return None                # wagflow_repo would exit 2 here; the cap only loses a source
         done = gh_run(root, "issue", "view", number, "--json", "title,labels")
         data = json.loads(done.stdout) if done.returncode == 0 else None
     except (OSError, ValueError, SystemExit):
@@ -785,24 +785,26 @@ def issue_facts(root: Path) -> dict | None:
 
 
 def issue_md_title(root: Path) -> str | None:
-    """The title the planner wrote at intake: `.workbench/issue.md`'s first `# ` line."""
+    """The title the planner wrote at intake: `.wagflow/issue.md`'s first `# ` line."""
     try:
-        text = (root / ".workbench" / "issue.md").read_text(encoding="utf-8-sig", errors="replace")
+        text = (root / ".wagflow" / "issue.md").read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
     return next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), None)
 
 
 def diff_lines(root: Path) -> tuple[int, str] | None:
-    """Lines added + deleted by the committed branch against its base (origin/HEAD's target, else
-    origin/main), from the merge-base, so a merged-in default branch does not count. Binary files count
-    0. None when it cannot be measured. Only root's own .git counts, as in workbench_repo."""
+    """Lines added + deleted by the committed branch against origin/HEAD's target, from the merge-base,
+    so a merged-in default branch does not count. Binary files count 0. None when the default branch
+    is unknown or the diff cannot be measured. Only root's own .git counts, as in wagflow_repo."""
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", str(root), "--git-dir", ".git", *args], capture_output=True,
                               text=True, encoding="utf-8", errors="replace")
     try:
         head = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-        base = head.stdout.strip() if head.returncode == 0 and head.stdout.strip() else "origin/main"
+        if head.returncode != 0 or not head.stdout.strip():
+            return None
+        base = head.stdout.strip()
         done = git("diff", "--numstat", f"{base}...HEAD")
     except OSError:
         return None
@@ -881,7 +883,7 @@ def check_review(root: Path) -> list[str]:
     """A revmux report with no recorded decision, or a last round that owes another round (#64).
     A checkout that ran no revmux round is not checked; a loop that was already reviewing when #64
     landed records its rounds like any other (every K can be recorded)."""
-    reports = [int(match[1]) for path in (root / ".workbench" / "review").glob("revmux-r*.md")
+    reports = [int(match[1]) for path in (root / ".wagflow" / "review").glob("revmux-r*.md")
                if (match := re.fullmatch(r"revmux-r(\d+)\.md", path.name))]
     last = last_review_round(root)
     newest = max(reports, default=0)
@@ -937,7 +939,7 @@ def cmd_review_round(args: argparse.Namespace) -> int:
         return 2
     cap = review_cap(root, settings)
     settings = {**settings, "cap": cap["cap"]}
-    report = Path(args.report or f".workbench/review/revmux-r{args.round}.md")
+    report = Path(args.report or f".wagflow/review/revmux-r{args.round}.md")
     report = report if report.is_absolute() else root / report
     try:
         parsed = parse_revmux_report(report.read_text(encoding="utf-8-sig", errors="replace"))
@@ -1077,7 +1079,7 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
     if tool != "kimi":
         print(f"plan-check: not required (implementer={tool})")
         return 0
-    path = Path(args.plan) if args.plan else root / ".workbench" / "plan.md"
+    path = Path(args.plan) if args.plan else root / ".wagflow" / "plan.md"
     path = path if path.is_absolute() else root / path
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
@@ -1097,11 +1099,11 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
 # --- a reviewer's usage limit in a checkout that waits limits out (#77) ------------------------------
 
 def review_limit_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "review-limit.json"
+    return root / ".wagflow" / "state" / "review-limit.json"
 
 
 def run_record_path(root: Path, round_: int) -> Path:
-    return root / ".workbench" / "review" / f"revmux-r{round_}.json"
+    return root / ".wagflow" / "review" / f"revmux-r{round_}.json"
 
 
 def read_run_record(root: Path, round_: int) -> dict | None:
@@ -1164,7 +1166,7 @@ def limited_tool(root: Path, round_: int, agents: list[str]) -> str:
 
 
 def review_on_limit() -> str:
-    """`reviewOnLimit` from ~/.agworkbench.json: wait (default) or fallback. The launcher refuses others."""
+    """`reviewOnLimit` from ~/.wagflow.json: wait (default) or fallback. The launcher refuses others."""
     try:
         value = followup.read_config().get("reviewOnLimit")
     except followup.SettingsError:
@@ -1183,7 +1185,7 @@ def review_limit(root: Path, round_: int, agents: list[str]) -> int:
           f"it is rerun and recorded")
     if review_on_limit() == "fallback":
         clear_review_limit(root, round_)
-        print(f"next: rerun now with python \"$AGWORKBENCH/lib/wb.py\" revmux --round {round_} --rerun "
+        print(f"next: rerun now with python \"$WAGFLOW/lib/wb.py\" revmux --round {round_} --rerun "
               "--profile claude-only (reviewOnLimit=fallback)")
         return 0
     minutes = max(1, math.ceil(limit_retry_minutes()))      # revmux --after takes whole minutes
@@ -1191,7 +1193,7 @@ def review_limit(root: Path, round_: int, agents: list[str]) -> int:
     from conductor import atomic_json
     atomic_json(review_limit_path(root), {"tool": limited_tool(root, round_, agents), "agents": agents, "since": since,
                                           "retryAt": since + minutes * 60, "round": round_})
-    print(f"next: rerun with python \"$AGWORKBENCH/lib/wb.py\" revmux --round {round_} --rerun --after {minutes} "
+    print(f"next: rerun with python \"$WAGFLOW/lib/wb.py\" revmux --round {round_} --rerun --after {minutes} "
           "(it waits on screen, then reviews); keep your waiter and end your turn")
     return 0
 
@@ -1259,7 +1261,7 @@ NESTED_LABEL = "follow-up-nested"
 
 
 def follow_ups_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "follow-ups.json"
+    return root / ".wagflow" / "state" / "follow-ups.json"
 
 
 def load_follow_ups(root: Path) -> list[dict]:
@@ -1300,13 +1302,13 @@ def cmd_follow_up_add(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- the workbench's own repo (#71) ----------------------------------------------------------------
+# --- the WagFlow's own repo (#71) ----------------------------------------------------------------
 # In a fork's checkout gh resolves its base repository to the fork's parent, so a gh call without
 # --repo reads and writes upstream. Every repo-scoped call names this checkout's origin instead, and
 # a write aimed at another repo is refused before gh runs.
 
 class ForeignRepo(RuntimeError):
-    """A gh write aimed at a repo other than the workbench's own."""
+    """A gh write aimed at a repo other than the WagFlow's own."""
 
 
 REPO_WRITES = {
@@ -1334,14 +1336,14 @@ API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H",
 API_FIELD_FLAGS = ("-f", "--raw-field", "-F", "--field", "--input")
 
 
-def workbench_repo(root: Path) -> str:
+def wagflow_repo(root: Path) -> str:
     """`owner/name` of the checkout's origin, case kept. Only root's own .git counts: a folder inside
     another clone is not a checkout (r1 critique 1). No origin on GitHub is exit 2, never gh's guess."""
     done = subprocess.run(["git", "-C", str(root), "--git-dir", ".git", "remote", "get-url", "origin"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     repo = triage.github_repo(done.stdout) if done.returncode == 0 else None
     if not repo:
-        print(f"wb: cannot tell this workbench's repository: {root} has no GitHub origin "
+        print(f"wb: cannot tell this WagFlow's repository: {root} has no GitHub origin "
               f"({(done.stderr or done.stdout or '').strip() or 'not a clone'}); gh is not left to guess (#71)",
               file=sys.stderr)
         raise SystemExit(2)
@@ -1382,7 +1384,7 @@ def split_args(args: list[str]) -> tuple[str | None, int | None]:
 
 
 def refuse(what: str, target: str, repo: str) -> ForeignRepo:
-    return ForeignRepo(f"refused: gh {what} targets {target}, not this workbench's repo {repo} (#71)")
+    return ForeignRepo(f"refused: gh {what} targets {target}, not this WagFlow's repo {repo} (#71)")
 
 
 def api_flag(arg: str) -> str | None:
@@ -1422,8 +1424,8 @@ def scoped_api(args: list[str], repo: str) -> list[str]:
 
 
 def scoped(args: list[str] | tuple[str, ...], repo: str) -> list[str]:
-    """args with the workbench repo named; ForeignRepo for a write to another repo. `api graphql` is
-    not inspected: the workbench sends no mutations."""
+    """args with the WagFlow repo named; ForeignRepo for a write to another repo. `api graphql` is
+    not inspected: the WagFlow sends no mutations."""
     args = list(args)
     if args[:1] == ["api"]:
         return scoped_api(args, repo)
@@ -1444,7 +1446,7 @@ def scoped(args: list[str] | tuple[str, ...], repo: str) -> list[str]:
 
 
 def gh_argv(root: Path, args) -> list[str]:
-    return ["gh", *scoped(args, workbench_repo(root))]
+    return ["gh", *scoped(args, wagflow_repo(root))]
 
 
 def gh_run(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -1464,7 +1466,7 @@ def issue_body(item: dict, source: int, pr: int | None, related: list[str] = (),
     return (f"{item.get('body', '').rstrip()}\n\n{notes}{where}\n"
             f"Severity: {item.get('severity')}; origin: {item.get('origin')}"
             f"{'; disputed' if item.get('disputed') else ''}\n\n"
-            f"<!-- agworkbench:follow-up source=#{source} -->\n"
+            f"<!-- wagflow:follow-up source=#{source} -->\n"
             + (f"{marker}\n" if marker else "") + f"{PLANNER_MARKER}\n")
 
 
@@ -1495,7 +1497,7 @@ def cmd_follow_up_file(args: argparse.Namespace) -> int:
     labels = {label.get("name") for label in source_info.get("labels", [])}
     label = NESTED_LABEL if labels & {FOLLOW_UP_LABEL, NESTED_LABEL} else FOLLOW_UP_LABEL
     created = gh_run(root, "label", "create", label, "--color", "BFD4F2",
-                     "--description", "filed automatically by an agworkbench loop")
+                     "--description", "filed automatically by a WagFlow loop")
     use_label = created.returncode == 0 or "already exists" in (created.stderr or "")
     if not use_label:
         print(f"wb: follow-up: cannot create label '{label}' ({created.stderr.strip()}); filing without it")
@@ -1525,7 +1527,7 @@ def file_legacy(root: Path, args: argparse.Namespace, items: list[dict], pending
             item["url"] = same[0]["url"]
             print(f"{item['key']}: already open as {item['url']}")
         else:
-            body_file = root / ".workbench" / "state" / f"follow-up-{item['key']}.md"
+            body_file = root / ".wagflow" / "state" / f"follow-up-{item['key']}.md"
             body_file.write_text(issue_body(item, args.source, args.pr), encoding="utf-8")
             argv = ["issue", "create", "--title", item["title"], "--body-file", str(body_file)]
             if label:
@@ -1550,7 +1552,7 @@ def file_without_dedupe(root: Path, args: argparse.Namespace, items: list[dict],
     failed = file_legacy(root, args, items, own, label)
     if any(not followup.own_issue(i) for i in pending) or any(i.get("refresh") for i in items):
         try:
-            repo = workbench_repo(root)
+            repo = wagflow_repo(root)
             file_leftovers(root, repo, args, items, [], label, source_title,
                            triaged=followup.triage_on(config, repo))
         except (DedupeFailed, ValueError, KeyError, TypeError) as err:
@@ -1585,7 +1587,7 @@ def fetch_issues(root: Path, repo: str, label: str, state: str) -> list[dict]:
 
 def ensure_label(root: Path, name: str) -> bool:
     created = gh_run(root, "label", "create", name, "--color", "D93F0B",
-                     "--description", "agworkbench priority (#34, #42)")
+                     "--description", "wagflow priority (#34, #42)")
     return created.returncode == 0 or "already exists" in (created.stderr or "")
 
 
@@ -1599,7 +1601,7 @@ def dup_comment(item: dict, args: argparse.Namespace, count: int, bump: str) -> 
     if bump:
         lines += [bump, ""]
     lines += [f"Duplicate reports so far: {count} ({count + 1} reports in all).", "",
-              followup.dup_marker(item, args.source, args.pr), f"<!-- agworkbench:dup-count {count} -->",
+              followup.dup_marker(item, args.source, args.pr), f"<!-- wagflow:dup-count {count} -->",
               PLANNER_MARKER]
     return "\n".join(lines) + "\n"
 
@@ -1676,7 +1678,7 @@ def file_leftovers(root: Path, repo: str, args: argparse.Namespace, items: list[
     target = followup.severity_priority(severity)
     body = (followup.extend_leftovers_body(old_body, active, severity) if existing else
             followup.leftovers_body(active, args.source, args.pr))
-    body_file = root / ".workbench" / "state" / "follow-up-leftovers.md"
+    body_file = root / ".wagflow" / "state" / "follow-up-leftovers.md"
     body_file.write_text(body, encoding="utf-8")
     try:
         if existing:
@@ -1755,7 +1757,7 @@ def record_duplicate(root: Path, repo: str, item: dict, number: int, semantic: b
         bump = (f"priority {current or 'untriaged'} -> {target}: reported {count + 1} times "
                 f"({', '.join(state['reports'] + ([] if already else [this]))})")
     if not already:
-        body_file = root / ".workbench" / "state" / f"follow-up-{item['key']}-dup.md"
+        body_file = root / ".wagflow" / "state" / f"follow-up-{item['key']}-dup.md"
         body_file.write_text(dup_comment(item, args, count, bump), encoding="utf-8")
         try:
             gh_ok(root, f"commenting on #{number}", "issue", "comment", str(number), "--body-file", str(body_file))
@@ -1775,7 +1777,7 @@ def file_deduped(root: Path, args: argparse.Namespace, items: list[dict], pendin
     if label is None:
         note("an issue filed without the follow-up label cannot be found as a duplicate later")
     try:
-        repo = workbench_repo(root)
+        repo = wagflow_repo(root)
         candidates = {}
         for name in (FOLLOW_UP_LABEL, NESTED_LABEL):
             for issue in fetch_issues(root, repo, name, "all"):
@@ -1873,7 +1875,7 @@ def file_new(root: Path, item: dict, args: argparse.Namespace, label: str | None
              triaged: bool) -> dict:
     """File the item as a new issue; its priority comes from triage when the repo has it, else from
     the severity. Returns it as a candidate, so a later item of this run can match it."""
-    body_file = root / ".workbench" / "state" / f"follow-up-{item['key']}.md"
+    body_file = root / ".wagflow" / "state" / f"follow-up-{item['key']}.md"
     body_file.write_text(issue_body(item, args.source, args.pr, related,
                                     followup.finding_marker(item, args.source, args.pr)), encoding="utf-8")
     argv = ["issue", "create", "--title", item["title"], "--body-file", str(body_file)]
@@ -1910,7 +1912,7 @@ def loop_done(root: Path, pr: str | None, sha: str | None) -> int:
         return 1
     record = {"pr": int(str(pr).rsplit("/", 1)[-1]), "sha": sha,
               "followUps": list(dict.fromkeys(item["url"] for item in items)), "at": time.time()}
-    path = root / ".workbench" / "state" / "loop-done.json"
+    path = root / ".wagflow" / "state" / "loop-done.json"
     from conductor import Lock, atomic_json, read_json, write_loop_state, repo_name, pr_number, pr_url, QueueError
     member_path = path.with_name('queue-member.json')
     if member_path.exists():
@@ -1953,7 +1955,7 @@ def loop_done_no_pr(root: Path, reason: str | None, pr: str | None = None) -> in
         return 2
     branch = current_branch(root)
     number = issue_number(root, branch)
-    member_path = root / '.workbench/state/queue-member.json'
+    member_path = root / '.wagflow/state/queue-member.json'
     if member_path.exists():
         try:
             member = json.loads(member_path.read_text(encoding='utf-8-sig'))
@@ -1999,7 +2001,7 @@ def loop_done_no_pr(root: Path, reason: str | None, pr: str | None = None) -> in
     record = dict(pr=None, noPr=True, issue=int(number), issueState='CLOSED',
                   stateReason=issue.get('stateReason'), reason=reason.strip(),
                   followUps=list(dict.fromkeys(item['url'] for item in items)), at=time.time())
-    path = root / '.workbench/state/loop-done.json'
+    path = root / '.wagflow/state/loop-done.json'
     try:
         from conductor import Lock, atomic_json
         with Lock(path.with_name('loop-done.lock')):
@@ -2028,7 +2030,7 @@ def fetch_pr(pr_ref: str, repo: str | None = None) -> tuple[dict, list[dict]]:
     if not match:
         raise RuntimeError(f"cannot tell the repository from PR url {pr.get('url')!r}")
     if repo and not same_repo(match[1], repo):
-        raise ForeignRepo(f"PR {pr['url']} is in {match[1]}, not this workbench's repo {repo}")
+        raise ForeignRepo(f"PR {pr['url']} is in {match[1]}, not this WagFlow's repo {repo}")
     pages = gh_json("api", f"repos/{match[1]}/pulls/{match[2]}/comments", "--paginate", "--slurp")
     inline = [comment for page in pages for comment in page] if pages and isinstance(pages[0], list) else list(pages or [])
     return pr, inline
@@ -2040,7 +2042,7 @@ def cmd_merge_check(args: argparse.Namespace) -> int:
         return 2
     root = checkout()
     try:
-        pr, inline = fetch_pr(args.pr, workbench_repo(root))
+        pr, inline = fetch_pr(args.pr, wagflow_repo(root))
         checks = None
         # CI is classified only for the tested head: checks of another commit mean nothing (#32).
         if (pr.get("headRefOid") or "").lower() == args.head.lower() and pr.get("state") == "OPEN" \
@@ -2198,7 +2200,7 @@ def merge_round_limits() -> dict:
 
 
 def update_check_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "update-check.json"
+    return root / ".wagflow" / "state" / "update-check.json"
 
 
 def location_file(text: str | None, token: bool = False) -> str:
@@ -2218,7 +2220,7 @@ def review_flagged_files(root: Path) -> set[str]:
     report (`limited` partials too), and every recorded follow-up's `file`."""
     files = set()
     sections = SEVERE_SECTIONS + MINOR_SECTIONS + APART_SECTIONS
-    for path in sorted((root / ".workbench" / "review").glob("revmux-r*.md")):
+    for path in sorted((root / ".wagflow" / "review").glob("revmux-r*.md")):
         try:
             text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
@@ -2429,7 +2431,7 @@ def cmd_update_check(args: argparse.Namespace) -> int:
 
 
 def rounds_path(root: Path) -> Path:
-    return root / ".workbench" / "state" / "merge-rounds.json"
+    return root / ".wagflow" / "state" / "merge-rounds.json"
 
 
 def merge_summary(record: dict, limits: dict) -> str:
@@ -2541,7 +2543,7 @@ def failed_actions_runs(checks: dict) -> tuple[list[tuple[str, str | None, dict]
 
 def cmd_ci_log(args: argparse.Namespace) -> int:
     """The failing CI log for a FIX round (#32): the last lines of each failed job, in a file under
-    .workbench/review/ that the FIX mail points at."""
+    .wagflow/review/ that the FIX mail points at."""
     root = checkout()
     try:
         runs, external = failed_actions_runs(fetch_checks(str(args.pr)))
@@ -2563,7 +2565,7 @@ def cmd_ci_log(args: argparse.Namespace) -> int:
         parts.append(header + "\n".join((done.stdout or "").splitlines()[-args.lines:]))
     for check in external:
         parts.append(f"=== {check.get('name')} {check.get('state')} - external CI, no log here: {check.get('link')}")
-    folder = root / ".workbench" / "review"
+    folder = root / ".wagflow" / "review"
     folder.mkdir(parents=True, exist_ok=True)
     k = 1
     while (folder / f"ci-r{k}.log").exists():
@@ -2676,7 +2678,7 @@ def main() -> int:
                    help="with --rerun: wait this long on screen first, for the reviewer's limit to reset")
     p.set_defaults(func=cmd_revmux)
     p = subs.add_parser("plan-check", help="with a Kimi implementer: is the plan Kimi-grade? (#77)")
-    p.add_argument("--plan", help="default .workbench/plan.md")
+    p.add_argument("--plan", help="default .wagflow/plan.md")
     p.set_defaults(func=cmd_plan_check)
     p = subs.add_parser("settings", help="print this checkout's settings (implementer, revmux profile, auto-merge, review, failover)")
     p.set_defaults(func=cmd_settings)
@@ -2704,7 +2706,7 @@ def main() -> int:
     p.set_defaults(func=cmd_merge_check)
     p = subs.add_parser("review-round", help="record a verified revmux round's decision: continue, stop, clean, cap, or limit (#64, #77)")
     p.add_argument("--round", type=int)
-    p.add_argument("--report", help="default .workbench/review/revmux-r<K>.md")
+    p.add_argument("--report", help="default .wagflow/review/revmux-r<K>.md")
     p.add_argument("--severe", type=int, help="the verified Blocker+Critical+Major count, when it differs from revmux's")
     p.add_argument("--reason", help="why --severe is below revmux's count (required then)")
     p.add_argument("--summary", action="store_true", help="print the review line for the PR body or merge note")
@@ -2718,7 +2720,7 @@ def main() -> int:
                         "arguments may not contain cmd metacharacters (& | < > ^ %% ! \" ( )): they are refused")
     p.set_defaults(func=cmd_suite)
     p = subs.add_parser("human-review", help="open revdiff for the human, selected")
-    p.add_argument("--base", required=True, help="e.g. origin/main")
+    p.add_argument("--base", required=True, help="e.g. origin/master")
     p.set_defaults(func=cmd_human_review)
     p = subs.add_parser("status", help="set this pane's sidebar status")
     p.add_argument("state", choices=["idle", "active", "blocked", "completed"])
@@ -2756,7 +2758,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return args.func(args)
-    except agw.CtlError as err:
+    except wag.CtlError as err:
         print(f"wb: {err}", file=sys.stderr)
         return 1
 

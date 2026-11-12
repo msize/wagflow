@@ -1,4 +1,4 @@
-# Shared helpers for github-workbench. Dot-sourced; defines functions only.
+# Shared helpers for WagFlow. Dot-sourced; defines functions only.
 # Written for Windows PowerShell 5.1 as well as PowerShell 7: no ternaries, no ?? operators.
 
 $script:Lib = $PSScriptRoot
@@ -88,7 +88,7 @@ function Invoke-LaunchSafely([scriptblock] $Body) {
         # Logging must not turn an empty failed-clone target into a non-empty one.
         if ($script:LaunchLog -and -not $script:LaunchLog.Path -and $script:Launch.Checkout -and
             (Test-Path -LiteralPath (Join-Path $script:Launch.Checkout '.git'))) {
-            Connect-LaunchLog (Join-Path $script:Launch.Checkout '.workbench\state\launch.log')
+            Connect-LaunchLog (Join-Path $script:Launch.Checkout '.wagflow\state\launch.log')
         }
         $dump = @($failure.Exception.ToString(), $failure.InvocationInfo.PositionMessage,
             $failure.ScriptStackTrace) -join "`n"
@@ -104,11 +104,11 @@ function Invoke-LaunchSafely([scriptblock] $Body) {
 
 # --- configuration ---------------------------------------------------------------------------
 
-function Get-WorkbenchConfig {
-    <# ~/.agworkbench.json, all keys optional:
+function Get-WagFlowConfig {
+    <# ~/.wagflow.json, all keys optional:
          claudeArgs     extra arguments for claude, e.g. ["--dangerously-skip-permissions"]
          codexArgs      extra arguments for codex (policy flags are refused - see pane-codex.ps1)
-         checkoutRoot   where per-issue clones go (default ~/source/workbench)
+         checkoutRoot   where per-issue clones go (default ~/source/wagflow)
          allowNetwork   let Codex's sandbox reach the network (default false)
          implementer    who runs in the right pane: codex (default), claude or kimi (#65)
          revmuxProfile  revmux profile for review rounds (default: comprehensive with codex,
@@ -140,9 +140,9 @@ function Get-WorkbenchConfig {
          reviewOnLimit  a revmux round a reviewer's usage limit degraded, with -WaitOnLimit (#77): wait
                         (default) reruns it after limitRetryMinutes, fallback reruns it now with
                         claude-only #>
-    $path = Join-Path $HOME '.agworkbench.json'
-    if ($env:AGWORKBENCH_CONFIG) { $path = $env:AGWORKBENCH_CONFIG }   # tests point this elsewhere
-    $config = @{ claudeArgs = @(); codexArgs = @(); checkoutRoot = (Join-Path $HOME 'source\workbench'); allowNetwork = $false;
+    $path = Join-Path $HOME '.wagflow.json'
+    if ($env:WAGFLOW_CONFIG) { $path = $env:WAGFLOW_CONFIG }   # tests point this elsewhere
+    $config = @{ claudeArgs = @(); codexArgs = @(); checkoutRoot = (Join-Path $HOME 'source\wagflow'); allowNetwork = $false;
                  implementer = 'codex'; revmuxProfile = $null; autoMerge = $false; failover = $true; autonomous = $false;
                  cleanup = 'merged'; minFreeGB = 20; minFreeRamGB = 3; stallMinutes = 15; kimiPath = $null; kimiArgs = @();
                  failoverOrder = @('claude', 'codex', 'kimi'); limitRetryMinutes = 30; reviewOnLimit = 'wait';
@@ -292,8 +292,8 @@ function Get-KimiProblem {
     param($Config, [string] $Checkout, [switch] $NoDoctor)
     $exe = Find-KimiExe $Config
     if (-not $exe) {
-        if ($Config.kimiPath) { return "kimi not found at kimiPath '$($Config.kimiPath)' (~/.agworkbench.json)" }
-        return "kimi not found: set kimiPath in ~/.agworkbench.json, put kimi on PATH, or install it to ~\.kimi-code\bin\kimi.exe"
+        if ($Config.kimiPath) { return "kimi not found at kimiPath '$($Config.kimiPath)' (~/.wagflow.json)" }
+        return "kimi not found: set kimiPath in ~/.wagflow.json, put kimi on PATH, or install it to ~\.kimi-code\bin\kimi.exe"
     }
     $arguments = Get-KimiArgsProblem $Config
     if ($arguments) { return $arguments }
@@ -319,13 +319,13 @@ function Assert-KimiReady($Config, [string] $Checkout) {
 
 # --- the terminal ----------------------------------------------------------------------------
 
-function Get-AgwintermCtl {
+function Get-WagtermCtl {
     $candidates = @()
-    if ($env:AGWINTERMCTL) { $candidates += $env:AGWINTERMCTL }
-    $onPath = Get-Command agwintermctl -ErrorAction SilentlyContinue
+    if ($env:WAGTERMCTL) { $candidates += $env:WAGTERMCTL }
+    $onPath = Get-Command wagtermctl -ErrorAction SilentlyContinue
     if ($onPath) { $candidates += $onPath.Source }
-    $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\agwinterm\agwintermctl.exe')
-    $candidates += (Join-Path $HOME 'scoop\apps\agwinterm\current\agwintermctl.exe')
+    $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\wagterm\wagtermctl.exe')
+    $candidates += (Join-Path $HOME 'scoop\apps\wagterm\current\wagtermctl.exe')
     foreach ($candidate in $candidates) { if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate } }
     return $null
 }
@@ -404,12 +404,12 @@ function Get-ToolchainVersions {
             if ($LASTEXITCODE -eq 0 -and $description) { $version = @($description)[0] }
         }
     } catch { $version = 'unversioned' }
-    [pscustomobject] @{ Name = 'agworkbench'; Version = "$version ($script:Root)" }
-    foreach ($name in @('agwinterm', 'claude', 'codex', 'kimi', 'revmux', 'revdiff', 'gh')) {
+    [pscustomobject] @{ Name = 'wagflow'; Version = "$version ($script:Root)" }
+    foreach ($name in @('wagterm', 'claude', 'codex', 'kimi', 'revmux', 'revdiff', 'gh')) {
         try {
             $arguments = @('--version')
-            if ($name -eq 'agwinterm') {
-                $exe = Get-AgwintermCtl
+            if ($name -eq 'wagterm') {
+                $exe = Get-WagtermCtl
                 $arguments = @('version')
             } elseif ($name -eq 'kimi') {
                 $exe = Find-KimiExe $null        # PATH, then where its installer puts it (#65)
@@ -423,16 +423,14 @@ function Get-ToolchainVersions {
     }
 }
 
-function Get-AgwintermApp {
-    # The installer ships Agwinterm.Win32.exe; the scoop manifest exposes agwinterm.exe.
+function Get-WagtermApp {
+    # The installer and portable release ship wagterm.exe.
     foreach ($candidate in @(
-            (Join-Path $env:LOCALAPPDATA 'Programs\agwinterm\Agwinterm.Win32.exe'),
-            (Join-Path $env:LOCALAPPDATA 'Programs\agwinterm\agwinterm.exe'),
-            (Join-Path $HOME 'scoop\apps\agwinterm\current\agwinterm.exe'),
-            (Join-Path $HOME 'scoop\apps\agwinterm\current\Agwinterm.Win32.exe'))) {
+            (Join-Path $env:LOCALAPPDATA 'Programs\wagterm\wagterm.exe'),
+            (Join-Path $HOME 'scoop\apps\wagterm\current\wagterm.exe'))) {
         if (Test-Path -LiteralPath $candidate) { return $candidate }
     }
-    $shim = Get-Command agwinterm -ErrorAction SilentlyContinue
+    $shim = Get-Command wagterm -ErrorAction SilentlyContinue
     if ($shim) { return $shim.Source }
     return $null
 }
@@ -440,12 +438,12 @@ function Get-AgwintermApp {
 function Invoke-Ctl {
     param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $Arguments)
     Write-LaunchLog ctl ($Arguments -join ' ')
-    $ctl = Get-AgwintermCtl
-    if (-not $ctl) { throw "agwintermctl not found" }
+    $ctl = Get-WagtermCtl
+    if (-not $ctl) { throw "wagtermctl not found" }
     $ErrorActionPreference = 'Continue'
     $PSNativeCommandUseErrorActionPreference = $false
-    # agwintermctl is .NET and writes stdout in the console code page. Under `pwsh -NoProfile` -
-    # which is how github-workbench.cmd starts this - that is ibm437, and Codex's prompt glyph
+    # wagtermctl is .NET and writes stdout in the console code page. Under `pwsh -NoProfile` -
+    # which is how wagflow.cmd starts this - that is ibm437, and Codex's prompt glyph
     # U+276F arrives as three wrong characters, so a pane sitting on a prompt never looked like one.
     # UTF-8 for the call, then put back whatever the caller had.
     $previous = $null
@@ -459,73 +457,54 @@ function Invoke-Ctl {
     }
     $text = (($output | ForEach-Object { "$_" }) -join "`n").Trim()
     Write-LaunchLog ctl "exit ${code}: $(($text -split '\r?\n')[0])"
-    if ($code -ne 0) { throw "agwintermctl $($Arguments -join ' ') (exit ${code}): $text" }
+    if ($code -ne 0) { throw "wagtermctl $($Arguments -join ' ') (exit ${code}): $text" }
     return $text
 }
 
-function Test-AgwintermRunning {
+function Test-WagtermRunning {
     try { Invoke-Ctl ping | Out-Null; return $true } catch { return $false }
 }
 
-function Test-InsideAgwinterm {
-    # agwinterm and agliteterm both set these, and share the control API.
-    return ($env:AGWINTERM_ENABLED -eq '1' -and [bool]$env:AGWINTERM_SESSION_ID)
+function Test-InsideWagterm {
+    # WagTerm sets its own session variables and exposes the control API.
+    return ($env:WAGTERM_ENABLED -eq '1' -and [bool]$env:WAGTERM_SESSION_ID)
 }
 
-function Install-Agwinterm {
-    param([switch] $Yes)
-    Write-Host "agwinterm is not installed." -ForegroundColor Yellow
-    if (-not $Yes) {
-        $answer = Read-Host "Install it with scoop from github.com/yeroo/scoop-bucket? [y/N]"
-        if ($answer -notmatch '^(y|yes)$') { throw "agwinterm is required; not installed." }
-    }
-    if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-        if (-not $Yes) {
-            $answer = Read-Host "scoop is not installed either. Install scoop (https://scoop.sh) for this user? [y/N]"
-            if ($answer -notmatch '^(y|yes)$') { throw "scoop is required to install agwinterm." }
-        }
-        Write-Step "installing scoop"
-        Invoke-RestMethod -Uri 'https://get.scoop.sh' | Invoke-Expression
-    }
-    $buckets = (scoop bucket list 6>$null | Out-String)
-    if ($buckets -notmatch 'yeroo/scoop-bucket') {
-        Write-Step "adding the agwinterm bucket"
-        scoop bucket add agwinterm https://github.com/yeroo/scoop-bucket | Out-Host
-    }
-    Write-Step "installing agwinterm"
-    scoop install agwinterm/agwinterm | Out-Host
-    if (-not (Get-AgwintermCtl)) { throw "scoop finished but agwintermctl is still not found" }
-    Install-AgwintermIntegrations
+function Assert-WagTermInstalled {
+    if (Get-WagtermCtl) { return }
+    throw ('WagTerm is required. Install it from https://github.com/msize/wagterm/releases, ' +
+        'then run wagtermctl install cli or set WAGTERMCTL to its full path. ' +
+        'The upstream terminal package does not install WagTerm.')
 }
 
-function Install-AgwintermIntegrations {
+function Install-WagtermIntegrations {
     # The terminal's own agent skill and status hooks: sidebar dots, and agents that know the API.
-    $ctl = Get-AgwintermCtl
+    $ctl = Get-WagtermCtl
     if (-not $ctl) { return }
     foreach ($what in @('skill', 'hooks')) {
-        try { Invoke-Ctl install $what | Out-Null; Write-Done "agwinterm: installed $what" }
-        catch { Write-Warning "agwinterm install $what failed: $_" }
+        try { Invoke-Ctl install $what | Out-Null; Write-Done "wagterm: installed $what" }
+        catch { Write-Warning "wagterm install $what failed: $_" }
     }
 }
 
-function Start-AgwintermApp {
+function Start-WagtermApp {
     param([int] $TimeoutSeconds = 30)
-    $app = Get-AgwintermApp
-    if (-not $app) { throw "agwinterm is installed but its executable was not found" }
-    Write-Step "starting agwinterm"
+    $app = Get-WagtermApp
+    if (-not $app) { throw "WagTerm is installed but its executable was not found" }
+    Write-Step "starting wagterm"
     Start-Process -FilePath $app | Out-Null
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if (Test-AgwintermRunning) { return }
+        if (Test-WagtermRunning) { return }
         Start-Sleep -Milliseconds 500
     }
-    throw "agwinterm did not answer on its control pipe within $TimeoutSeconds s"
+    throw "wagterm did not answer on its control pipe within $TimeoutSeconds s"
 }
 
 function Get-Tree {
     $reply = (Invoke-Ctl tree --json) | ConvertFrom-Json
     if ($reply.ok -eq $false -or $null -eq $reply.result -or
-        $null -eq $reply.result.PSObject.Properties['workspaces']) { throw 'agwintermctl returned an invalid session tree' }
+        $null -eq $reply.result.PSObject.Properties['workspaces']) { throw 'wagtermctl returned an invalid session tree' }
     return $reply.result
 }
 
@@ -536,28 +515,28 @@ function Get-SessionById([string] $Id) {
 
 $script:WindowTiming = @{ Poll = 1; Wait = 60 }
 
-function Test-AgwintermMinimized {
-    if (-not ('WorkbenchWindow' -as [type])) {
+function Test-WagtermMinimized {
+    if (-not ('WagFlowWindow' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class WorkbenchWindow {
+public static class WagFlowWindow {
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
 }
 '@
     }
-    foreach ($process in @(Get-Process agwinterm, Agwinterm.Win32 -ErrorAction SilentlyContinue)) {
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and [WorkbenchWindow]::IsIconic($process.MainWindowHandle)) { return $true }
+    foreach ($process in @(Get-Process wagterm -ErrorAction SilentlyContinue)) {
+        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and [WagFlowWindow]::IsIconic($process.MainWindowHandle)) { return $true }
     }
     return $false
 }
 
-function Restore-AgwintermWindow {
-    if (-not ('WorkbenchWindow' -as [type])) { $null = Test-AgwintermMinimized }
-    foreach ($process in @(Get-Process agwinterm, Agwinterm.Win32 -ErrorAction SilentlyContinue)) {
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and [WorkbenchWindow]::IsIconic($process.MainWindowHandle)) {
-            [void][WorkbenchWindow]::ShowWindow($process.MainWindowHandle, 4)
+function Restore-WagtermWindow {
+    if (-not ('WagFlowWindow' -as [type])) { $null = Test-WagtermMinimized }
+    foreach ($process in @(Get-Process wagterm -ErrorAction SilentlyContinue)) {
+        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and [WagFlowWindow]::IsIconic($process.MainWindowHandle)) {
+            [void][WagFlowWindow]::ShowWindow($process.MainWindowHandle, 4)
         }
     }
 }
@@ -569,7 +548,7 @@ function Confirm-WindowUsable([string] $Pane) {
         $deadline = (Get-Date).AddSeconds($script:WindowTiming.Wait)
         $restored = $false
         do {
-            $minimized = Test-AgwintermMinimized
+            $minimized = Test-WagtermMinimized
             $reply = (Invoke-Ctl session metrics $Pane --json) | ConvertFrom-Json
             if ($reply.ok -ne $true -or $null -eq $reply.result -or $null -eq $reply.result.cols) {
                 throw "window metrics unavailable for pane $Pane"
@@ -578,7 +557,7 @@ function Confirm-WindowUsable([string] $Pane) {
                 $script:Launch.Stage = $oldStage
                 return
             }
-            if (-not $restored) { Restore-AgwintermWindow; $restored = $true }
+            if (-not $restored) { Restore-WagtermWindow; $restored = $true }
             Start-Sleep -Milliseconds ([int]($script:WindowTiming.Poll * 1000))
         } while ((Get-Date) -lt $deadline)
         $script:Launch.QueueIncomplete = $true
@@ -590,7 +569,7 @@ function Confirm-WindowUsable([string] $Pane) {
 }
 
 function Get-QueueLaunchPath([string] $Checkout) {
-    return Join-Path $Checkout '.workbench\state\queue-launch.json'
+    return Join-Path $Checkout '.wagflow\state\queue-launch.json'
 }
 
 function Add-QueueCreatedSession([string] $Checkout, [string] $Id) {
@@ -660,7 +639,7 @@ function Test-ShellReady([string] $Text) {
     $rows = @($Text -split '\r?\n' | Where-Object { $_.Trim() })
     if (-not $rows.Count) { return $false }
     $frame = ($rows | Select-Object -Last 15) -join "`n"
-    if ($frame -match 'esc to interrupt|bypass permissions|for shortcuts|Ask Codex|Chat from Workbench|Working|\[y/N\]|Do you trust|\(y/n\)') { return $false }
+    if ($frame -match 'esc to interrupt|bypass permissions|for shortcuts|Ask Codex|Chat from WagFlow|Working|\[y/N\]|Do you trust|\(y/n\)') { return $false }
     # Kimi Code (#65): its footer's mode label and context meter, its trust dialog, its composer box.
     if ($frame -match ('Ask When Needed|Never Ask|context: \d+%|Trust this folder|(?m)^\s*[' + [char]0x256D + [char]0x2570 + ']' + [char]0x2500)) { return $false }
     # Rules around a composer are evidence of an agent even during a footer redraw.
@@ -774,7 +753,7 @@ function Get-PanePlan($Session, $Registry) {
 
 function Test-ClaudeCaller { return $env:CLAUDECODE -eq '1' }
 
-function Normalize-WorkbenchPath([string] $Path) {
+function Normalize-WagFlowPath([string] $Path) {
     if (-not $Path) { throw 'empty path' }
     return [IO.Path]::GetFullPath($Path.Replace('/', '\')).TrimEnd('\').ToLowerInvariant()
 }
@@ -819,7 +798,7 @@ function Get-ClaudeTranscript([string] $SessionId) {
         $found += @{ Path = $path; Cwd = $cwd }
     }
     $valid = @($found | Where-Object { $_.Cwd })
-    $cwds = @($valid | ForEach-Object { Normalize-WorkbenchPath $_.Cwd } | Select-Object -Unique)
+    $cwds = @($valid | ForEach-Object { Normalize-WagFlowPath $_.Cwd } | Select-Object -Unique)
     if ($cwds.Count -gt 1) { throw "Claude transcripts disagree on cwd: $($valid.Path -join ', ')" }
     if ($valid.Count) { return $valid[0] }
     if ($found.Count) { return $found[0] }
@@ -841,7 +820,7 @@ function Find-LegacyClaudeIdentity([string] $Checkout, [string[]] $Exclude = @()
                 if ($reader.EndOfStream) { break }
                 try { $entry = $reader.ReadLine() | ConvertFrom-Json } catch { continue }
                 if ($entry.entrypoint -eq 'cli' -and $entry.cwd -and
-                    (Normalize-WorkbenchPath $entry.cwd) -eq (Normalize-WorkbenchPath $Checkout)) { return $entry }
+                    (Normalize-WagFlowPath $entry.cwd) -eq (Normalize-WagFlowPath $Checkout)) { return $entry }
             }
         }
         if ($metadata) { $candidates += @{ sessionId = $file.BaseName; cwd = $Checkout; Time = $file.LastWriteTimeUtc } }
@@ -851,7 +830,7 @@ function Find-LegacyClaudeIdentity([string] $Checkout, [string[]] $Exclude = @()
     $selected = $ordered[0]
     # Duplicate copies of this session must agree, too.
     $transcript = Get-ClaudeTranscript $selected.sessionId
-    if (-not $transcript.Cwd -or (Normalize-WorkbenchPath $transcript.Cwd) -ne (Normalize-WorkbenchPath $Checkout)) { return $null }
+    if (-not $transcript.Cwd -or (Normalize-WagFlowPath $transcript.Cwd) -ne (Normalize-WagFlowPath $Checkout)) { return $null }
     return $selected
 }
 
@@ -869,8 +848,8 @@ function Get-ClaudeIdentityPath([string] $Checkout, [string] $Role = 'planner') 
     # Two Claude roles can share one checkout: the planner (left) and, with implementer=claude,
     # the implementer (right). Each has its own launcher-owned conversation record.
     switch ($Role) {
-        'planner' { return Join-Path $Checkout '.workbench\state\claude.json' }
-        'implementer' { return Join-Path $Checkout '.workbench\state\implementer-claude.json' }
+        'planner' { return Join-Path $Checkout '.wagflow\state\claude.json' }
+        'implementer' { return Join-Path $Checkout '.wagflow\state\implementer-claude.json' }
         default { throw "unknown Claude role '$Role'" }
     }
 }
@@ -884,11 +863,11 @@ function Get-RecordedClaudeSessionId([string] $Checkout, [string] $Role) {
 }
 
 function Get-ClaudeQuietSettings([string] $Checkout) {
-    <# #33: the settings every Claude the workbench launches starts with. Prompt suggestions draw greyed
+    <# #33: the settings every Claude the WagFlow launches starts with. Prompt suggestions draw greyed
        text in an idle composer; the relay then cannot prove it empty, so it neither rings the agent
        nor closes its session. Passed to --settings as a FILE path: an inline JSON string loses its
        quotes on the way to a native program under Windows PowerShell 5.1. #>
-    return Join-Path $Checkout '.workbench\state\claude-settings.json'
+    return Join-Path $Checkout '.wagflow\state\claude-settings.json'
 }
 
 function Get-ShellScriptPolicies {
@@ -902,22 +881,22 @@ function Get-ShellScriptPolicies {
 }
 
 function Install-PowerShellEntry([string] $Root, $Policies = $null) {
-    # github-workbench.ps1 next to github-workbench.cmd (#38): PowerShell resolves it first, so a
+    # wagflow.ps1 next to wagflow.cmd (#38): PowerShell resolves it first, so a
     # query's double-quoted labels survive; the .cmd would split them. Only when every installed
     # PowerShell may run local scripts - under Restricted or AllSigned the .ps1 would be found first
     # and refused, with no fallback to the .cmd.
     if ($null -eq $Policies) { $Policies = Get-ShellScriptPolicies }
-    $target = Join-Path $Root 'github-workbench.ps1'
+    $target = Join-Path $Root 'wagflow.ps1'
     $blocked = @($Policies.Keys | Where-Object { "$($Policies[$_])".Trim() -notin @('RemoteSigned', 'Unrestricted', 'Bypass') })
     if ($blocked) {
         if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
         $which = ($blocked | ForEach-Object { "$_ ($($Policies[$_]))" }) -join ', '
-        Write-Warning ("PowerShell may not run local scripts in $which, so github-workbench runs through " +
-            "github-workbench.cmd there: inside a -Queue 'where: ...' query, quote labels with single " +
+        Write-Warning ("PowerShell may not run local scripts in $which, so wagflow runs through " +
+            "wagflow.cmd there: inside a -Queue 'where: ...' query, quote labels with single " +
             "quotes (for example -Queue ""where: bug AND NOT 'needs design'"").")
         return $false
     }
-    Copy-Item -Force -LiteralPath (Join-Path $Root 'lib\github-workbench-entry.ps1') -Destination $target
+    Copy-Item -Force -LiteralPath (Join-Path $Root 'lib\wagflow-entry.ps1') -Destination $target
     Write-Done "PowerShell entry point: $target"
     return $true
 }
@@ -974,7 +953,7 @@ function Read-ClaudeIdentity([string] $Checkout, [string] $Issue, [string] $Role
         ($null -ne $record.pane -and -not (Test-SessionGuid $record.pane)) -or
         -not $record.cwd -or -not [IO.Path]::IsPathRooted([string]$record.cwd) -or
         $record.origin -notin @('fresh', 'adopted', 'recovered') -or $record.issue -ne $Issue -or
-        (Normalize-WorkbenchPath $record.checkout) -ne (Normalize-WorkbenchPath $Checkout)) {
+        (Normalize-WagFlowPath $record.checkout) -ne (Normalize-WagFlowPath $Checkout)) {
         throw "invalid Claude identity in '$path'"
     }
     if (-not $record.PSObject.Properties['pane']) { throw "missing pane binding in '$path'" }
@@ -1000,9 +979,9 @@ function Write-AtomicJson([string] $Path, $Record) {
 }
 
 function Invoke-WithCheckoutLock([string] $Checkout, [scriptblock] $Body) {
-    $key = Normalize-WorkbenchPath $Checkout
+    $key = Normalize-WagFlowPath $Checkout
     if ($script:CheckoutLock -and $script:CheckoutLock.Key -eq $key) { & $Body; return }
-    $path = Join-Path $Checkout '.workbench\state\launch.lock'
+    $path = Join-Path $Checkout '.wagflow\state\launch.lock'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
     try { $stream = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
     catch { throw "Cannot acquire checkout launch lock '$path'; another launcher may be active: $($_.Exception.Message)" }
@@ -1039,18 +1018,18 @@ function Reserve-ClaudeIdentity([string] $Checkout, [string] $Issue, [string] $P
             if ($Role -eq 'implementer') {
                 # No implementer Claude predates its record, so there is nothing legacy to recover;
                 # guessing from transcripts could hand it the planner's conversation.
-                Write-Warning "Claude implementer pane '$Pane' has no recorded conversation; leaving it unpinned. Close it and rerun: github-workbench $(Quote $Issue)"
+                Write-Warning "Claude implementer pane '$Pane' has no recorded conversation; leaving it unpinned. Close it and rerun: wagflow $(Quote $Issue)"
                 return $null
             }
             $implementerId = Get-RecordedClaudeSessionId $Checkout 'implementer'
             if ((Get-SavedImplementerTool $Checkout) -eq 'claude' -and -not $implementerId) {
-                Write-Warning "Claude pane '$Pane' cannot be told apart from the Claude implementer's conversation; leaving it unpinned. In that Claude session, run: github-workbench $(Quote $Issue)"
+                Write-Warning "Claude pane '$Pane' cannot be told apart from the Claude implementer's conversation; leaving it unpinned. In that Claude session, run: wagflow $(Quote $Issue)"
                 return $null
             }
             try { $recovered = Find-LegacyClaudeIdentity $Checkout @($implementerId | Where-Object { $_ }) }
             catch { Write-LaunchLog identity "cannot recover Claude: $_" }
             if (-not $recovered) {
-                Write-Warning "Claude pane '$Pane' has no recoverable conversation; leaving it unpinned. In that Claude session, run: github-workbench $(Quote $Issue)"
+                Write-Warning "Claude pane '$Pane' has no recoverable conversation; leaving it unpinned. In that Claude session, run: wagflow $(Quote $Issue)"
                 return $null
             }
         }
@@ -1074,7 +1053,7 @@ function Reserve-ClaudeIdentity([string] $Checkout, [string] $Issue, [string] $P
 function Find-CodexSession([string] $Checkout) {
     $root = Join-Path $HOME '.codex'
     if ($env:CODEX_HOME) { $root = $env:CODEX_HOME }
-    $wanted = Normalize-WorkbenchPath $Checkout
+    $wanted = Normalize-WagFlowPath $Checkout
     $matches = @()
     foreach ($file in @(Get-ChildItem -Path (Join-Path $root 'sessions\*\*\*\rollout-*.jsonl') -File -ErrorAction SilentlyContinue)) {
         try {
@@ -1087,7 +1066,7 @@ function Find-CodexSession([string] $Checkout) {
             if ($meta.timestamp -is [DateTime]) { $stamp = [DateTimeOffset]$meta.timestamp; $validStamp = $true }
             else { $validStamp = [DateTimeOffset]::TryParse([string]$meta.timestamp, [ref]$stamp) }
             if ($entry.type -ne 'session_meta' -or -not (Test-SessionGuid $meta.id) -or
-                $meta.originator -ne 'codex-tui' -or (Normalize-WorkbenchPath $meta.cwd) -ne $wanted -or
+                $meta.originator -ne 'codex-tui' -or (Normalize-WagFlowPath $meta.cwd) -ne $wanted -or
                 -not $validStamp) { continue }
             $matches += [pscustomobject]@{ Id = $meta.id; Timestamp = $stamp; Name = $file.FullName }
         } catch { continue }
@@ -1097,13 +1076,13 @@ function Find-CodexSession([string] $Checkout) {
     return $null
 }
 
-function Get-ImplementerStatePath([string] $Checkout) { return Join-Path $Checkout '.workbench\state\implementer.json' }
+function Get-ImplementerStatePath([string] $Checkout) { return Join-Path $Checkout '.wagflow\state\implementer.json' }
 
 function Get-SavedImplementerTool([string] $Checkout) {
     <# The tool this checkout's right pane was set up with: state\implementer.json, else - for a
        checkout set up before that file existed - the mailbox registry's entry for the codex box. #>
     foreach ($source in @(@{ Path = (Get-ImplementerStatePath $Checkout); Field = 'tool' },
-                          @{ Path = (Join-Path $Checkout '.workbench\state\agents.json'); Field = 'registry' })) {
+                          @{ Path = (Join-Path $Checkout '.wagflow\state\agents.json'); Field = 'registry' })) {
         if (-not (Test-Path -LiteralPath $source.Path)) { continue }
         try { $data = Get-Content -Raw -LiteralPath $source.Path -Encoding UTF8 | ConvertFrom-Json } catch { continue }
         $tool = $data.tool
@@ -1138,7 +1117,7 @@ function Resolve-Implementer {
     $conflict = $null
     if ($Requested -and $saved -and $Requested -ne $saved) {
         $pane = $null
-        $registryPath = Join-Path $Checkout '.workbench\state\agents.json'
+        $registryPath = Join-Path $Checkout '.wagflow\state\agents.json'
         if (Test-Path -LiteralPath $registryPath) {
             try { $pane = (Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json).agents.codex.pane } catch { $pane = $null }
         }
@@ -1293,7 +1272,7 @@ function Find-AgentRoot([string] $Checkout, [string] $Tool) {
        agent binary itself, and a match whose parent also matched is not a root. #>
     $processes = @(Get-AgentProcesses)
     if ($Tool -eq 'codex') {
-        $needle = "shell_environment_policy.set.AI_HUB='" + (Join-Path $Checkout '.workbench') + "'"
+        $needle = "shell_environment_policy.set.AI_HUB='" + (Join-Path $Checkout '.wagflow') + "'"
         $matched = @($processes | Where-Object { $_.Name -eq 'codex.exe' -and $_.CommandLine -and
             $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
     } elseif ($Tool -eq 'kimi') {
@@ -1319,7 +1298,7 @@ function Confirm-PaneStable([string] $Checkout, [string] $Pane, [string] $Tool, 
        the pane for Sample seconds. Any change, or a frame of another kind, refuses. #>
     $timing = $script:FailoverTiming
     $relay = $null
-    $relayPath = Join-Path $Checkout '.workbench\state\relay.json'
+    $relayPath = Join-Path $Checkout '.wagflow\state\relay.json'
     if (Test-Path -LiteralPath $relayPath) {
         try { $relay = (Get-Content -Raw -LiteralPath $relayPath | ConvertFrom-Json).limits.codex } catch { $relay = $null }
     }
@@ -1353,7 +1332,7 @@ function Get-FailoverTarget {
     foreach ($tool in @($Config.failoverOrder)) {
         if ($tool -eq $Saved) { continue }
         if ($recorded.ContainsKey($tool)) {
-            $reasons += "$tool was recorded limited at $($recorded[$tool].at) ('$($recorded[$tool].line)'). Once it has reset, the human clears that with: github-workbench <issue> -Implementer $tool"
+            $reasons += "$tool was recorded limited at $($recorded[$tool].at) ('$($recorded[$tool].line)'). Once it has reset, the human clears that with: wagflow <issue> -Implementer $tool"
             continue
         }
         if ($tool -eq 'kimi') {
@@ -1372,14 +1351,14 @@ function Invoke-Failover {
        [ImplementerConflict] (exit 2) and happens before anything is stopped or written. A failure
        after that point is a [FailoverIncomplete] (exit 3): the human relaunches with -Implementer. #>
     param([string] $Checkout, $Config, $Tree)
-    if (-not $Config.failover) { throw [ImplementerConflict]::new('failover refused: "failover" is false in ~/.agworkbench.json') }
+    if (-not $Config.failover) { throw [ImplementerConflict]::new('failover refused: "failover" is false in ~/.wagflow.json') }
     $saved = Get-SavedImplementerTool $Checkout
     if (-not $saved) { throw [ImplementerConflict]::new('failover refused: this checkout has no recorded implementer') }
     $choice = Get-FailoverTarget -Checkout $Checkout -Config $Config -Saved $saved
     if (-not $choice.Target) { throw [ImplementerConflict]::new("failover refused: $($choice.Reasons -join '; ')") }
     $target = $choice.Target
     $pane = $null
-    $registryPath = Join-Path $Checkout '.workbench\state\agents.json'
+    $registryPath = Join-Path $Checkout '.wagflow\state\agents.json'
     if (Test-Path -LiteralPath $registryPath) {
         try { $pane = (Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json).agents.codex.pane } catch { $pane = $null }
     }
@@ -1419,7 +1398,7 @@ function Invoke-Failover {
             throw [FailoverIncomplete]::new("${incomplete}: the pane showed no shell prompt within $($script:FailoverTiming.ShellWait)s")
         }
         if (Test-Path -LiteralPath $lock) {
-            throw [FailoverIncomplete]::new("${incomplete}: '$lock' appeared while it was being stopped. It was not deleted: check the repository, then run github-workbench <issue> -Implementer $target")
+            throw [FailoverIncomplete]::new("${incomplete}: '$lock' appeared while it was being stopped. It was not deleted: check the repository, then run wagflow <issue> -Implementer $target")
         }
     } else { $incomplete = 'failover could not switch' }
     $line = $seen.line
@@ -1430,7 +1409,7 @@ function Invoke-Failover {
     # The old tool's limit text must not greet the new agent: its relay would read it as its own.
     Invoke-Ctl session type "Clear-Host`n" --target $pane | Out-Null
     if (-not (Wait-ShellPrompt -Pane $pane -TimeoutSeconds $script:FailoverTiming.ShellWait -Adopted)) {
-        throw [FailoverIncomplete]::new("${incomplete}: the pane is not a clean shell after Clear-Host; run github-workbench <issue> -Implementer $target once it is")
+        throw [FailoverIncomplete]::new("${incomplete}: the pane is not a clean shell after Clear-Host; run wagflow <issue> -Implementer $target once it is")
     }
     Write-Step "failover: $saved -> $target"
     return $target
@@ -1447,7 +1426,7 @@ function Set-PaneRestore([string] $Pane, [string] $Command) {
     $stage = $script:Launch.Stage
     try {
         Set-LaunchStage restore-pin
-        $script:Launch.RestoreRepair = "agwintermctl session restore $(Quote $Command) --target $(Quote $Pane)"
+        $script:Launch.RestoreRepair = "wagtermctl session restore $(Quote $Command) --target $(Quote $Pane)"
         $reply = (Invoke-Ctl session restore $Command --target $Pane) | ConvertFrom-Json
         if ($reply.action -ne 'pinned' -or $reply.pane -ne $Pane -or $reply.command -ne $Command) {
             throw "restore pin was not confirmed for '$Pane'"
@@ -1468,8 +1447,8 @@ function Set-ImplementerRestore([string] $Checkout, [string] $Pane, [string] $Co
 }
 
 function Get-CallerSession($Tree) {
-    $pane = $env:AGWINTERM_PANE_ID
-    if (-not $pane) { $pane = $env:AGWINTERM_SESSION_ID }
+    $pane = $env:WAGTERM_PANE_ID
+    if (-not $pane) { $pane = $env:WAGTERM_SESSION_ID }
     $found = Find-SessionByPane $Tree $pane
     if (-not $found) { throw [AdoptRefused]::new("caller pane '$pane' is not in the terminal tree") }
     $found.Pane = $pane
@@ -1498,7 +1477,7 @@ function Get-AdoptionPlan($Tree, [string] $Checkout, [string] $WorkspaceName, [i
     $registry = $null
     $adoption = $null
     foreach ($file in @('agents', 'adoption')) {
-        $path = Join-Path $Checkout ".workbench\state\$file.json"
+        $path = Join-Path $Checkout ".wagflow\state\$file.json"
         if (Test-Path -LiteralPath $path) {
             try { $data = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json }
             catch { throw [AdoptRefused]::new("cannot validate '$path': $_") }
@@ -1551,7 +1530,7 @@ function Get-AdoptionPlan($Tree, [string] $Checkout, [string] $WorkspaceName, [i
 }
 
 function Save-AdoptionState([string] $Checkout, $State) {
-    $path = Join-Path $Checkout '.workbench\state\adoption.json'
+    $path = Join-Path $Checkout '.wagflow\state\adoption.json'
     Write-AtomicJson $path $State
 }
 
@@ -1585,17 +1564,17 @@ function Initialize-AdoptedSession($Plan, [string] $Checkout, [string] $Workspac
     Save-AdoptionState $Checkout $state
 }
 
-function Start-WorkbenchSession {
+function Start-WagFlowSession {
     param([string] $Checkout, [int] $Number, [string] $Slug, [string] $RepoName,
           [string] $ClaudeLaunch, [string] $CodexLaunch, [string] $CodexRestore,
           [scriptblock] $RelayCommand, [switch] $NoRelay,
           [string] $AdoptSession, [string] $CallerPane, [string] $ImplementerTool = 'codex',
           [bool] $ImplementerIdentityReady = $true, [string] $WorkspaceName)
     $invokeArgs = @{} + $PSBoundParameters
-    Invoke-WithCheckoutLock $Checkout { Start-WorkbenchSessionCore @invokeArgs }
+    Invoke-WithCheckoutLock $Checkout { Start-WagFlowSessionCore @invokeArgs }
 }
 
-function Start-WorkbenchSessionCore {
+function Start-WagFlowSessionCore {
     param([string] $Checkout, [int] $Number, [string] $Slug, [string] $RepoName,
           [string] $ClaudeLaunch, [string] $CodexLaunch, [string] $CodexRestore,
           [scriptblock] $RelayCommand, [switch] $NoRelay,
@@ -1628,7 +1607,7 @@ function Start-WorkbenchSessionCore {
         $remaining = @(Close-QueueSessions $Checkout)
         if ($remaining.Count) { throw "earlier queue launch sessions still open: $($remaining -join ', ')" }
     }
-    $hub = Join-Path $Checkout '.workbench'
+    $hub = Join-Path $Checkout '.wagflow'
     $registryPath = Join-Path $hub 'state\agents.json'
     $registry = $null
     Set-LaunchStage discovery
@@ -1650,13 +1629,13 @@ function Start-WorkbenchSessionCore {
         $check = & python (Join-Path $script:Lib 'conductor.py') member-context --file $context.queue `
             --number $context.number --attempt $context.attempt --token $context.token
         if ($LASTEXITCODE -ne 0) { throw 'queue launch authorization changed before setup' }
-        $membershipPath = Join-Path $Checkout '.workbench\state\queue-member.json'
+        $membershipPath = Join-Path $Checkout '.wagflow\state\queue-member.json'
         if (Test-Path -LiteralPath $membershipPath) {
             $membership = Get-Content -Raw -LiteralPath $membershipPath | ConvertFrom-Json
             if ($membership.queue -ne $context.queue -or $membership.repo -ne $context.repo -or $membership.number -ne $Number) {
                 throw 'this checkout belongs to another queue'
             }
-        } elseif ($session) { throw "issue #$Number already has a workbench loop running outside the queue in $Checkout; finish and close that workbench session before retrying" }
+        } elseif ($session) { throw "issue #$Number already has a WagFlow loop running outside the queue in $Checkout; finish and close that WagFlow session before retrying" }
         Write-AtomicJson $membershipPath $context
     }
     $relaySession = $null
@@ -1924,7 +1903,7 @@ function Format-RepairMessage($Launch) {
         }
     } else { $lines += 'Session setup or mailbox registration is incomplete; rerun to complete the missing steps.' }
     if ($Launch.IssueRef) {
-        $resume = "Resume and complete missing steps: github-workbench $(Quote $Launch.IssueRef)"
+        $resume = "Resume and complete missing steps: wagflow $(Quote $Launch.IssueRef)"
         if ($Launch.NoRelay) { $resume += ' -NoRelay' }
         if ($Launch.NewSession) { $resume += ' -NewSession' }
         $lines += $resume
@@ -2011,7 +1990,7 @@ function Get-NamedCheckoutMembership([string] $Dir, [hashtable] $Issue) {
        a junction or subst checkoutRoot spells differently. Returns @{ Dir; Workspace; Queue }; $null
        when there is no membership or a valid one that is not this issue's named checkout. A membership
        that cannot be read is refused, as closer.workspace_of refuses it: guessing would go plain. #>
-    $path = Join-Path $Dir '.workbench\state\queue-member.json'
+    $path = Join-Path $Dir '.wagflow\state\queue-member.json'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
     try { $member = Get-Content -Raw -LiteralPath $path -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
     catch { throw "cannot read the queue membership '$path': $_" }
@@ -2047,7 +2026,7 @@ function Find-NamedCheckout([hashtable] $Issue, [string] $Root, [string] $Cwd) {
 function New-IssueCheckout {
     <# A FULL clone per issue, not a worktree: a worktree's .git lives outside the checkout, and
        Codex's workspace-write sandbox would then be unable to commit. Reused if it already exists,
-       so running github-workbench again on the same issue resumes rather than starts over. #>
+       so running wagflow again on the same issue resumes rather than starts over. #>
     param([hashtable] $Issue, [string] $Title, [string] $Root, [string] $Directory)
     $name = ($Issue.Repo -split '/')[1]
     $dir = Join-Path $Root "$name-issue-$($Issue.Number)"
@@ -2099,7 +2078,7 @@ function New-IssueCheckout {
         & gh repo clone $Issue.Repo $dir '--' --quiet | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "gh repo clone failed" }
     }
-    Connect-LaunchLog (Join-Path $dir '.workbench\state\launch.log')
+    Connect-LaunchLog (Join-Path $dir '.wagflow\state\launch.log')
     Push-Location $dir
     try {
         $existing = & git rev-parse --abbrev-ref HEAD
@@ -2116,9 +2095,9 @@ function New-IssueCheckout {
             if ($LASTEXITCODE -ne 0) { throw 'git checkout failed' }
         } else { $branch = $existing }
         Set-GitHubDefaultRepo $Issue           # in the checkout: queue mode's gh proxy runs in the cwd
-        # keep the workbench's own files out of the project without touching its .gitignore
+        # keep the WagFlow's own files out of the project without touching its .gitignore
         $exclude = Join-Path $dir '.git\info\exclude'
-        $lines = @('.workbench/', '.revmux/')
+        $lines = @('.wagflow/', '.revmux/')
         $current = ''
         if (Test-Path -LiteralPath $exclude) { $current = Get-Content -Raw -LiteralPath $exclude }
         foreach ($line in $lines) { if ($current -notmatch [regex]::Escape($line)) { Add-Content -LiteralPath $exclude -Value $line } }
@@ -2131,7 +2110,7 @@ function Initialize-Mailbox {
     # relay types into its pane.
     param([string] $Checkout, [string] $ClaudePane, [string] $CodexPane, [string] $CodexTool = 'codex')
     if (-not (Test-ImplementerTool $CodexTool)) { throw "invalid implementer tool '$CodexTool'" }
-    $hub = Join-Path $Checkout '.workbench'
+    $hub = Join-Path $Checkout '.wagflow'
     New-Item -ItemType Directory -Force -Path $hub | Out-Null
     $env:AI_HUB = $hub
     $py = @"
@@ -2141,7 +2120,7 @@ hub.register('claude', tool='claude', pane=sys.argv[3], role='planner and review
 hub.register('codex', tool=sys.argv[5], pane=sys.argv[4], role='implementer', cwd=sys.argv[2])
 "@
     $py | & python - $script:Lib $Checkout $ClaudePane $CodexPane $CodexTool | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "could not initialise the workbench mailbox" }
+    if ($LASTEXITCODE -ne 0) { throw "could not initialise the WagFlow mailbox" }
     return $hub
 }
 
@@ -2149,7 +2128,7 @@ function Grant-CodexTrust {
     <# Codex stops on a "Do you trust the contents of this directory?" chooser the first time it runs
        in a new directory, and the relay - correctly - will not type into a dialog. So the loop would
        sit on that chooser for every new issue. The human authorised this clone by running
-       github-workbench on it, so the workbench records that trust the way Codex does itself when
+       wagflow on it, so the WagFlow records that trust the way Codex does itself when
        you answer "Yes": a lowercase [projects.'<path>'] entry in ~/.codex/config.toml. Only for
        clones this tool created under checkoutRoot; never for anything else. #>
     param([string] $Dir)
@@ -2215,13 +2194,13 @@ function Invoke-ClaudeHere([string] $Checkout, [string] $Issue) {
 function Quote-Bash([string] $Value) { return "'" + $Value.Replace("'", "'\''") + "'" }
 
 function Format-AdoptedBlock([string] $Checkout, [string] $Issue) {
-    $path = Join-Path $Checkout '.workbench\state\adopted.sh'
+    $path = Join-Path $Checkout '.wagflow\state\adopted.sh'
     $lines = @("cd -- $(Quote-Bash ($Checkout -replace '\\', '/')) || return 1 2>/dev/null || exit 1",
-        "export AGWORKBENCH=$(Quote-Bash $script:Root) AI_HUB=$(Quote-Bash (Join-Path $Checkout '.workbench')) AI_BOX=claude")
+        "export WAGFLOW=$(Quote-Bash $script:Root) AI_HUB=$(Quote-Bash (Join-Path $Checkout '.wagflow')) AI_BOX=claude")
     [IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
-    Write-Host "WORKBENCH ADOPTED`nissue:    $Issue`ncheckout: $Checkout"
+    Write-Host "WAGFLOW ADOPTED`nissue:    $Issue`ncheckout: $Checkout"
     Write-Host "context:  . $(Quote-Bash ($path -replace '\\', '/'))"
-    Write-Host "next:     run the start-github-issue skill for $Issue; prefix EVERY shell command (including wait-mail) with the context line and ' && '; use absolute paths under checkout for EVERY loop file read/write and source review, including file tools"
+    Write-Host "next:     run /wagflow-start for $Issue; prefix EVERY shell command (including wait-mail) with the context line and ' && '; use absolute paths under checkout for EVERY loop file read/write and source review, including file tools"
 }
 
 function Invoke-LauncherBody {
@@ -2234,7 +2213,7 @@ function Invoke-LauncherBody {
     $script:Launch.DryRun = [bool]$DryRun
     $script:Launch.NoRelay = [bool]$NoRelay
     Set-LaunchStage config
-    $config = Get-WorkbenchConfig
+    $config = Get-WagFlowConfig
     Set-LaunchStage resolve
     $ref = Resolve-IssueRef -Ref $Issue -RepoHint $Repo
     $issueRef = "$($ref.Repo)#$($ref.Number)"
@@ -2255,10 +2234,10 @@ function Invoke-LauncherBody {
         }
     }
     $slug = ConvertTo-Slug $info.title 24
-    Write-Host "workbench for $issueRef - $($info.title)" -ForegroundColor Cyan
+    Write-Host "WagFlow for $issueRef - $($info.title)" -ForegroundColor Cyan
     if ($info.state -ne 'OPEN') { Write-Warning "issue is $($info.state)" }
     $adoptionPlan = $null
-    if ((Test-InsideAgwinterm) -and -not $NewSession) {
+    if ((Test-InsideWagterm) -and -not $NewSession) {
         Set-LaunchStage adoption-preflight
         $expectedCheckout = Join-Path $config.checkoutRoot "$repoName-issue-$($ref.Number)"
         if ($namedDir) { $expectedCheckout = $namedDir }
@@ -2267,16 +2246,16 @@ function Invoke-LauncherBody {
 
     # --- 1. the terminal --------------------------------------------------------------------------
     Set-LaunchStage terminal
-    if (Test-InsideAgwinterm) {
-        if ($adoptionPlan) { Write-Step "inside agwinterm: adopting session $($adoptionPlan.Session.id)" }
-        else { Write-Step "inside agwinterm: opening the session in this window" }
-    } elseif (Get-AgwintermCtl) {
-        if ($DryRun) { Write-Step "would start agwinterm if it is not running" }
-        elseif (-not (Test-AgwintermRunning)) { Start-AgwintermApp }
-        else { Write-Step "agwinterm is running: opening the session there" }
+    if (Test-InsideWagterm) {
+        if ($adoptionPlan) { Write-Step "inside wagterm: adopting session $($adoptionPlan.Session.id)" }
+        else { Write-Step "inside wagterm: opening the session in this window" }
+    } elseif (Get-WagtermCtl) {
+        if ($DryRun) { Write-Step "would start wagterm if it is not running" }
+        elseif (-not (Test-WagtermRunning)) { Start-WagtermApp }
+        else { Write-Step "WagTerm is running: opening the session there" }
     } else {
-        if ($DryRun) { Write-Step "would install agwinterm with scoop, then start it" }
-        else { Install-Agwinterm -Yes:$Yes; Start-AgwintermApp }
+        if ($DryRun) { Write-Step "WagTerm is missing; install it from https://github.com/msize/wagterm/releases" }
+        else { Assert-WagTermInstalled; Start-WagtermApp }
     }
 
     Set-LaunchStage checkout
@@ -2295,7 +2274,7 @@ function Invoke-LauncherBody {
         Grant-CodexTrust -Dir $co.Dir
         Grant-ClaudeTrust -Dir $co.Dir
     }
-    $hubDir = Join-Path $co.Dir '.workbench'
+    $hubDir = Join-Path $co.Dir '.wagflow'
     $script:Launch.Checkout = $co.Dir
 
     $claudeLaunch = Get-PaneLaunch 'pane-claude.ps1' @{ Checkout = $co.Dir; Issue = $issueRef }
@@ -2419,7 +2398,7 @@ function Invoke-LauncherBody {
             $adoptArgs = @{ AdoptSession = $adoptionPlan.Session.id; CallerPane = $adoptionPlan.CallerPane;
                             ImplementerIdentityReady = [bool]$implementerReady }
         }
-        Start-WorkbenchSession -Checkout $co.Dir -Number $ref.Number -Slug $slug -RepoName $repoName -WorkspaceName $workspaceName `
+        Start-WagFlowSession -Checkout $co.Dir -Number $ref.Number -Slug $slug -RepoName $repoName -WorkspaceName $workspaceName `
             -ClaudeLaunch $claudeLaunch -CodexLaunch $codexLaunch -CodexRestore $codexRestore `
             -RelayCommand $relayBuilder -NoRelay:$NoRelay -ImplementerTool $resolved.Tool @adoptArgs
     }

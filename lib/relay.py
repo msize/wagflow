@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""relay - the workbench's doorbell and its eye on GitHub.
+"""relay - the WagFlow's doorbell and its eye on GitHub.
 
-Six jobs, one loop, one process per issue, running in its own visible agwinterm session:
+Six jobs, one loop, one process per issue, running in its own visible WagTerm session:
 
 1. **Mail.** Agents never type into each other's panes. They write a message file into the
-   workbench mailbox (`agmsg send`, no `--nudge`), and the relay types a one-line pointer into the
-   recipient's pane. This is what lets Codex stay sandboxed: its sandbox denies the agwinterm control
+   wagflow mailbox (`wagmsg send`, no `--nudge`), and the relay types a one-line pointer into the
+   recipient's pane. This is what lets Codex stay sandboxed: its sandbox denies the WagTerm control
    pipe, so it cannot ring a doorbell itself - but it can write a file inside its own workspace.
 
 2. **The pull request.** Once a PR exists for the issue branch, the relay watches it and files a
@@ -38,7 +38,7 @@ Six jobs, one loop, one process per issue, running in its own visible agwinterm 
    first, each on its own evidence (its completion marker, an ended direct-mode pane showing exactly
    the marker's rows), whatever the agents are doing. The gates - the planner has recorded
    `loop-state done`, no mail is unread, both agent panes are provably idle - apply to the issue
-   session and the relay's own session only. Every step goes to `.workbench/state/relay-close.log`;
+   session and the relay's own session only. Every step goes to `.wagflow/state/relay-close.log`;
    a stop request, unread mail to the planner (a human's above all) or autonomy turned off stops
    it. It never closes on a timeout
    alone: mail the implementer need not act on (its final notices, anything sent after the merge)
@@ -64,8 +64,8 @@ Six jobs, one loop, one process per issue, running in its own visible agwinterm 
 6. **Finished helpers (#84).** Every `--limit-interval` seconds, on every loop (autonomous or not,
    watching or draining), it closes each `#N revmux rK` and `#N suite <label>` session whose
    completion marker names a result mail that has been read - whatever its pane shows. The human's
-   revdiff (`#N your review`) stays. Reports and logs in `.workbench/review/` stay; each close is
-   logged in `.workbench/state/relay-close.log`. `closeHelpers: false` turns it off.
+   revdiff (`#N your review`) stays. Reports and logs in `.wagflow/review/` stay; each close is
+   logged in `.wagflow/state/relay-close.log`. `closeHelpers: false` turns it off.
 
 Nothing here polls on behalf of an agent: agents are woken by the relay and otherwise idle. The
 relay itself polls the mailbox directory, the GitHub API, the two agent panes (for limits and
@@ -110,7 +110,7 @@ AMBIGUOUS_ALERT_AFTER = 600.0
 ALERT_EVERY = 300.0
 TERMINAL_DRAIN_TIMEOUT = 30 * 60.0
 LIMIT_READS = 2          # consecutive reads that start (or end) a usage-limit episode
-STALL_MINUTES = 15.0     # the default stall period (#45); `stallMinutes` in ~/.agworkbench.json, 0 = off
+STALL_MINUTES = 15.0     # the default stall period (#45); `stallMinutes` in ~/.wagflow.json, 0 = off
 # A pending set unchanged this long is stuck, not running (#94 r1): wait-ci's default --timeout, the
 # bound the CI-running exemption had while every planner ran wait-ci.
 CI_STUCK_MINUTES = 90.0
@@ -121,7 +121,7 @@ LIMIT_RETRY_MINUTES = 30.0   # between probes of an agent waiting out its limit 
 KIMI_WINDOW_SECONDS = 5 * 3600.0   # Kimi's usage window (#88): its limit gives no reset time
 WINDOW_SLACK = 60.0      # the window-end probe comes this long after the window's end
 PROBE_TEXT = ("the usage limit may have reset; continue where you left off "
-              "(git status, .workbench, unread mail)")
+              "(git status, .wagflow, unread mail)")
 LAST_WORDS_MAX = 300     # how much of the implementer's last line a stall pointer quotes
 
 
@@ -129,7 +129,7 @@ LAST_WORDS_MAX = 300     # how much of the implementer's last line a stall point
 class Peer:
     box: str       # mailbox name: claude | codex
     tool: str      # peerchat profile: claude | codex
-    pane: str      # agwinterm pane id
+    pane: str      # WagTerm pane id
 
 
 # --- pure logic (tested without a terminal or a network) ------------------------------------
@@ -161,13 +161,13 @@ class Hold:
         return self.last_alert_at is not None
 
 
-def pointer_text(message: dict[str, Any], agmsg: Path, hub_dir: Path) -> str:
+def pointer_text(message: dict[str, Any], wagmsg: Path, hub_dir: Path) -> str:
     """The single line typed into a pane. Never the body - that stays in the file."""
     sender = message.get("from", "?")
     subject = message.get("subject", "")
     mid = message.get("id", "")
-    return (f"workbench mail from {sender}: {subject} [id {mid}] - read it with: "
-            f"python {agmsg} read {mid}  (AI_HUB={hub_dir})")
+    return (f"wagflow mail from {sender}: {subject} [id {mid}] - read it with: "
+            f"python {wagmsg} read {mid}  (AI_HUB={hub_dir})")
 
 
 def pr_events(old: dict[str, Any] | None, new: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -329,9 +329,9 @@ class PrFetch:
 
 
 def stall_setting() -> float:
-    """`stallMinutes` from ~/.agworkbench.json (AGWORKBENCH_CONFIG honoured): a number >= 0, 0 = off.
+    """`stallMinutes` from ~/.wagflow.json (WAGFLOW_CONFIG honoured): a number >= 0, 0 = off.
     The launcher refuses an invalid value; one that slips through here reads as the default."""
-    path = Path(os.environ.get("AGWORKBENCH_CONFIG") or (Path.home() / ".agworkbench.json"))
+    path = Path(os.environ.get("WAGFLOW_CONFIG") or (Path.home() / ".wagflow.json"))
     try:
         config = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -343,12 +343,12 @@ def stall_setting() -> float:
 
 
 def close_helpers_setting() -> tuple[bool, str]:
-    """(`closeHelpers` from ~/.agworkbench.json, why it is off) (#84). On when the file or the key is
+    """(`closeHelpers` from ~/.wagflow.json, why it is off) (#84). On when the file or the key is
     missing, or the key is null (the launcher skips null too). Fails closed: a config it cannot read or
     parse (locked, half-written, `//` comments), or a value that is not true or false, closes nothing.
     The key is matched in any case, as PowerShell's launcher reads it: any spelling set to anything but
     true or null turns closing off, so `"CloseHelpers": false` or two spellings that disagree keep all."""
-    path = Path(os.environ.get("AGWORKBENCH_CONFIG") or (Path.home() / ".agworkbench.json"))
+    path = Path(os.environ.get("WAGFLOW_CONFIG") or (Path.home() / ".wagflow.json"))
     try:
         config = json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
@@ -364,9 +364,9 @@ def close_helpers_setting() -> tuple[bool, str]:
 
 
 def limit_retry_setting() -> float:
-    """`limitRetryMinutes` from ~/.agworkbench.json (#77): a number > 0. The launcher refuses an invalid
+    """`limitRetryMinutes` from ~/.wagflow.json (#77): a number > 0. The launcher refuses an invalid
     value; one that slips through here reads as the default."""
-    path = Path(os.environ.get("AGWORKBENCH_CONFIG") or (Path.home() / ".agworkbench.json"))
+    path = Path(os.environ.get("WAGFLOW_CONFIG") or (Path.home() / ".wagflow.json"))
     try:
         config = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -495,7 +495,7 @@ class StallWatch:
     (both panes idle, nothing exempts it) -> one `stall` mail to the planner, level 1. Level 1: 2S
     after the pointer, with no progress and both panes idle for at least S -> report the loop
     blocked, level 2. Level 2: nothing more. Progress (the fingerprint changes) or an exemption
-    returns to level 0 with a fresh clock. Session status is never read: agwinterm's agent hooks
+    returns to level 0 with a fresh clock. Session status is never read: WagTerm's agent hooks
     rewrite it every turn. State is in memory, so a restart only makes a stall later, never earlier."""
 
     def __init__(self, relay: "Relay", minutes: float):
@@ -535,14 +535,14 @@ class StallWatch:
         """(helper sessions, the live ones' names, notes on quiet ones). A helper without a completion
         marker is live while its pane changed within 2S - one killed under memory pressure leaves its
         pane on screen and never writes the marker. The human's revdiff is always live."""
-        import agw
+        import wag
         close = closer.Closer(self.relay.hub_dir, self.relay.repo, closer.issue_from_branch(self.relay.branch),
                               self.relay.peers, log=lambda text: None, clock=now, dry_run=True)
         sessions = close.helper_sessions(snapshot)
         live, quiet, seen = [], [], set()
         for session in sessions:
             name = session.get("name") or "?"
-            panes = agw.panes_of(session)
+            panes = wag.panes_of(session)
             if panes and all(close.marker_path(pane).exists() for pane in panes):
                 continue
             if name.endswith(" your review") or not panes:
@@ -551,8 +551,8 @@ class StallWatch:
             pane = panes[0]
             seen.add(pane)
             try:
-                tail = limits.tail_hash(agw.pane_text(pane))
-            except (agw.CtlError, OSError):
+                tail = limits.tail_hash(wag.pane_text(pane))
+            except (wag.CtlError, OSError):
                 live.append(name)       # unreadable: never call a helper dead without evidence
                 continue
             previous = self.quiet.get(pane)
@@ -680,11 +680,11 @@ class StallWatch:
     def tick(self, texts: dict[str, Any]) -> None:
         if self.period <= 0:
             return
-        import agw
+        import wag
         instant = now()
         try:
-            snapshot = agw.tree()
-        except (agw.CtlError, OSError) as err:
+            snapshot = wag.tree()
+        except (wag.CtlError, OSError) as err:
             self.note(f"terminal tree unreadable ({err}); not judging")
             return
         sessions, live, quiet = self.helpers(snapshot)
@@ -791,7 +791,7 @@ class StallWatch:
             body += [f"CI on the PR head: {ci['summary']}", ""]
         body += ["Next step: check your mail waiter - it may have been killed under memory pressure; rearm it",
                  "if it is not running - and any finished helper (mail from `helper`,",
-                 "`.workbench/state/helpers/*.done`, `.workbench/review/`). Then continue the loop, or, if it",
+                 "`.wagflow/state/helpers/*.done`, `.wagflow/review/`). Then continue the loop, or, if it",
                  "waits on the human, say so and run `wb.py status blocked --sound` (queue mode: also",
                  "`wb.py loop-state blocked --reason ...`).", "",
                  f"With no progress for another {2 * self.period / 60:.0f} minutes the relay reports the loop blocked."]
@@ -809,7 +809,7 @@ class StallWatch:
         return True
 
     def escalate(self, idle: float, quiet: list[str]) -> None:
-        import agw
+        import wag
         summary = (f"stalled: loop idle for {idle / 60:.0f} min, no progress since the relay's stall pointer"
                    + (f"; {self.ci_stuck}" if self.ci_stuck else "") + (f"; {quiet[0]}" if quiet else ""))
         if self.relay.dry_run:
@@ -834,12 +834,12 @@ class StallWatch:
             if peer.box != "claude":
                 continue
             try:
-                agw.set_status("blocked", sound=True, blink=True, pane_id=peer.pane)
-            except (agw.CtlError, OSError) as err:
+                wag.set_status("blocked", sound=True, blink=True, pane_id=peer.pane)
+            except (wag.CtlError, OSError) as err:
                 self.relay.log(f"could not set blocked status: {err}")
             try:
-                agw.notify(peer.pane, summary, title="workbench relay")
-            except (agw.CtlError, OSError) as err:
+                wag.notify(peer.pane, summary, title="wagflow relay")
+            except (wag.CtlError, OSError) as err:
                 self.relay.log(f"could not notify: {err}")
 
 
@@ -848,7 +848,7 @@ class Relay:
                  mail_interval: float, pr_interval: float, dry_run: bool = False,
                  limit_interval: float = 30.0, stall_minutes: float = 0.0):
         os.environ["AI_HUB"] = str(hub_dir)
-        import hub  # noqa: E402 - imported after AI_HUB is set so its paths point at this workbench
+        import hub  # noqa: E402 - imported after AI_HUB is set so its paths point at this wagflow
         hub.reload_paths()
         self.hub = hub
         self.hub_dir = hub_dir
@@ -903,7 +903,7 @@ class Relay:
             self.state.pop('limits')
         if changed and not self.dry_run:
             self._save()
-        self.agmsg = HERE / "agmsg.py"
+        self.wagmsg = HERE / "wagmsg.py"
         self.holds: dict[tuple[str, str], Hold] = {}
         for box in self.state.get('reset_pending', []):
             if box in {peer.box for peer in peers}:
@@ -967,31 +967,31 @@ class Relay:
                 self.alert(peer, mid, entry.reason)
 
     def alert(self, peer: Peer, mid: str, reason: str) -> None:
-        import agw
-        message = f"workbench mail for {peer.box} ({mid}) is waiting: {reason}"
+        import wag
+        message = f"wagflow mail for {peer.box} ({mid}) is waiting: {reason}"
         self.log(f"ALERT {message}")
         # Attempt the notification even if setting status failed (and vice versa).
         try:
-            agw.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
-        except (agw.CtlError, OSError) as err:
+            wag.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not set blocked status for {peer.box}: {err}")
         try:
-            agw.notify(peer.pane, message, title='workbench relay')
-        except (agw.CtlError, OSError) as err:
+            wag.notify(peer.pane, message, title='wagflow relay')
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not notify {peer.box}: {err}")
 
     def clear(self, peer: Peer, mid: str) -> Hold | None:
         """Clear our last alert for a recipient. Without conditional terminal status ownership,
         this requested idle reset can race a newer status set by the agent's hook."""
-        import agw
+        import wag
         key = (peer.box, mid)
         entry = self.holds.get(key)
         if entry and entry.alerted and not self.dry_run and not any(
                 box == peer.box and (box, other_mid) != key and held.alerted
                 for (box, other_mid), held in self.holds.items()):
             try:
-                agw.set_status('idle', pane_id=peer.pane)
-            except (agw.CtlError, OSError) as err:
+                wag.set_status('idle', pane_id=peer.pane)
+            except (wag.CtlError, OSError) as err:
                 entry.clear_pending = True
                 pending = self.state.setdefault('reset_pending', [])
                 if peer.box not in pending:
@@ -1012,12 +1012,12 @@ class Relay:
     def read_panes(self) -> dict[str, Any]:
         """Each agent pane's text, read once per limit interval for the limit check and the stall
         watch; a read that failed is its exception."""
-        import agw
+        import wag
         texts: dict[str, Any] = {}
         for peer in self.peers:
             try:
-                texts[peer.box] = agw.pane_text(peer.pane)
-            except (agw.CtlError, OSError) as err:
+                texts[peer.box] = wag.pane_text(peer.pane)
+            except (wag.CtlError, OSError) as err:
                 texts[peer.box] = err
         return texts
 
@@ -1123,7 +1123,7 @@ class Relay:
             else:
                 what = "has hit its usage limit" + (" and exited to a shell" if episode.get('exited') else "")
             step = (f"The implementer {what}. Follow start-github-issue.md, Usage limits: check the frame "
-                    "below, then fail over with `github-workbench.cmd <issue> -Failover` (Bash timeout "
+                    "below, then fail over with `wagflow.cmd <issue> -Failover` (Bash timeout "
                     "600000) when failover is on.")
         body = "\n".join([f"Matched: {episode['line']}", f"Pane: {peer.box} ({peer.tool}) {peer.pane}",
                            f"First seen: {episode['firstSeen']}", "", "Next step: " + step, "",
@@ -1133,19 +1133,19 @@ class Relay:
     def alert_limit(self, peer: Peer, subject: str, body: str, detail: str) -> None:
         """A limit the human hears about: the planner's note, then the pane blocked with sound, and a
         notification."""
-        import agw
+        import wag
         try:
             self.hub.write_message(to='claude', sender='relay', kind='note', subject=subject, body=body)
         except OSError as err:
             self.log(f"could not file usage-limit mail: {err}")
         self.log(f"ALERT {subject}: {detail}")
         try:
-            agw.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
-        except (agw.CtlError, OSError) as err:
+            wag.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not set blocked status for {peer.box}: {err}")
         try:
-            agw.notify(peer.pane, f"{subject}: {detail}", title='workbench relay')
-        except (agw.CtlError, OSError) as err:
+            wag.notify(peer.pane, f"{subject}: {detail}", title='wagflow relay')
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not notify {peer.box}: {err}")
 
     # waiting out a usage limit (#77) ------------------------------------------------------------
@@ -1242,7 +1242,7 @@ class Relay:
 
     def announce_wait(self, peer: Peer, episode: dict, rows: list[str]) -> None:
         """One note to the planner that asks for nothing, and an idle status: no sound, no notification."""
-        import agw
+        import wag
         subject = f"usage limit: {peer.box} ({peer.tool}) waiting"
         who = "the planner (you)" if peer.box == 'claude' else "the implementer"
         step = (f"Do nothing: no failover. This checkout waits out usage limits (onLimit=wait): {who} is "
@@ -1258,8 +1258,8 @@ class Relay:
             self.log(f"could not file usage-limit mail: {err}")
         self.log(f"{subject}: {episode['line']}; next try {clock_text(episode['retryAt'])}")
         try:
-            agw.set_status('idle', pane_id=peer.pane)
-        except (agw.CtlError, OSError) as err:
+            wag.set_status('idle', pane_id=peer.pane)
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not set idle status for {peer.box}: {err}")
 
     def wait_limit(self, peer: Peer, episode: dict) -> None:
@@ -1278,14 +1278,14 @@ class Relay:
     def probe(self, peer: Peer, episode: dict) -> None:
         """Type the one probe pointer into the limited agent's idle composer. A pane nobody can type into
         is retried on every check; after limitRetryMinutes of that the human is told, once."""
-        import agw
+        import wag
         import peerchat
         try:
-            if peer.tool in ("claude", "kimi") and is_busy(agw.pane_text(peer.pane)):
+            if peer.tool in ("claude", "kimi") and is_busy(wag.pane_text(peer.pane)):
                 raise peerchat.Refused('mid-turn; waiting for the agent to finish')
-            text = peerchat.compose_text("Chat from Workbench: ", PROBE_TEXT)
+            text = peerchat.compose_text("Chat from WagFlow: ", PROBE_TEXT)
             outcome = peerchat.send(peer.pane, peerchat.PROFILES[peer.tool], text, dry_run=False, retry=False)
-        except (peerchat.Refused, peerchat.Failed, agw.CtlError, OSError) as err:
+        except (peerchat.Refused, peerchat.Failed, wag.CtlError, OSError) as err:
             since = episode.setdefault('probeRefusedSince', wall())
             self.log(f"usage limit: cannot probe {peer.box}: {err}")
             if wall() - since >= self.retry_seconds() and not episode.get('escalated'):
@@ -1297,8 +1297,8 @@ class Relay:
         if episode.pop('escalated', None):
             # The pane can take the probe again: the blocked status the escalation set is over.
             try:
-                agw.set_status('idle', pane_id=peer.pane)
-            except (agw.CtlError, OSError) as err:
+                wag.set_status('idle', pane_id=peer.pane)
+            except (wag.CtlError, OSError) as err:
                 self.log(f"could not clear blocked status for {peer.box}: {err}")
         self.log(f"usage limit: probed {peer.box} (probe {episode.get('probes', 0) + 1}) [{outcome}]")
 
@@ -1331,10 +1331,10 @@ class Relay:
             except ValueError as err:
                 self.sweep_note_once(f'helper close skipped: {err}')
                 return
-        import agw
+        import wag
         try:
             self.sweeper.step_finished_helpers()
-        except (agw.CtlError, OSError) as err:
+        except (wag.CtlError, OSError) as err:
             self.sweep_note_once(f'helper close skipped: terminal unreadable ({err})')
             return
         self.sweep_note = None
@@ -1376,7 +1376,7 @@ class Relay:
         False (nothing handed off) outside queue mode, when no conductor is running to take it (a
         queue that is not watching finishes once its last member has a PR), or when the session is
         not provably ours."""
-        import agw
+        import wag
         if self.dry_run or not (self.hub_dir / 'state' / 'queue-member.json').exists():
             return False
         if not self.conductor_running():
@@ -1398,34 +1398,34 @@ class Relay:
             return False
         close.log(f"handing the close to the queue conductor; closing the relay session {session.get('id')}")
         try:
-            agw.notify(mine, f"{'issue closed without a PR' if number is None else f'PR #{number}'}: autonomous close handed to the queue conductor", title='workbench relay')
-        except (agw.CtlError, OSError) as err:
+            wag.notify(mine, f"{'issue closed without a PR' if number is None else f'PR #{number}'}: autonomous close handed to the queue conductor", title='wagflow relay')
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not notify: {err}")
-        agw.clear_restore(mine)
-        agw.close_session(session.get('id'))
+        wag.clear_restore(mine)
+        wag.close_session(session.get('id'))
         return True
 
     def close_alert(self, reason: str) -> None:
-        import agw
-        message = f"autonomous close stopped: {reason} (log: .workbench/state/relay-close.log)"
+        import wag
+        message = f"autonomous close stopped: {reason} (log: .wagflow/state/relay-close.log)"
         if self.dry_run:
             return
         for peer in self.peers:
             if peer.box != 'claude':
                 continue
             try:
-                agw.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
-            except (agw.CtlError, OSError) as err:
+                wag.set_status('blocked', sound=True, blink=True, pane_id=peer.pane)
+            except (wag.CtlError, OSError) as err:
                 self.log(f"could not set blocked status: {err}")
             try:
-                agw.notify(peer.pane, message, title='workbench relay')
-            except (agw.CtlError, OSError) as err:
+                wag.notify(peer.pane, message, title='wagflow relay')
+            except (wag.CtlError, OSError) as err:
                 self.log(f"could not notify: {err}")
 
     def refuse_close(self, close: "closer.Closer", number: int | None, reasons: str | list[str],
                      *, handoff: bool = True) -> None:
         """Refuse a close without letting a failed queue handoff crash the relay."""
-        import agw
+        import wag
         items = [reasons] if isinstance(reasons, str) else reasons
         detail = '; '.join(items)
         close.log(f"NOT closing{', ' if detail.startswith('still waiting after') else ': '}{detail}")
@@ -1434,7 +1434,7 @@ class Relay:
         if handoff:
             try:
                 handed = self.hand_off_close(close, number, items)
-            except (agw.CtlError, OSError) as err:
+            except (wag.CtlError, OSError) as err:
                 close.log(f'could not hand the close to the queue conductor: {err}')
         if not handed:
             self.finish_close()
@@ -1470,7 +1470,7 @@ class Relay:
         alone (after it, only unread implementer mail is overridden, #44). A refusal is handed to the
         queue conductor's backstop when there is a running one and the session is provably ours (#44).
         A reopened issue or new open PR leaves the relay watching and returns False."""
-        import agw
+        import wag
         try:
             close = self.closer()
         except ValueError as err:
@@ -1537,7 +1537,7 @@ class Relay:
                 # Helpers first, and regardless of the agents (#33).
                 left_open = close.step_helpers(
                     gate=(lambda: close.issue_closed(gh_call)[0] is True) if number is None else None)
-            except (agw.CtlError, OSError) as err:
+            except (wag.CtlError, OSError) as err:
                 close.log(f"helper check failed: {err}")
             reasons = close.agent_blockers(number)
             if not reasons or close.overdue_ok():
@@ -1588,22 +1588,22 @@ class Relay:
             # Before this relay's own session goes (that ends this process), and detached from it (#41).
             close.start_cleanup(number)
             self.close_own_session(close, number, left_open)
-        except (agw.CtlError, OSError) as err:
+        except (wag.CtlError, OSError) as err:
             close.log(f"close failed: {err}")
             self.close_alert(f"a close step failed: {err}")
             self.finish_close()
         return True
 
     def close_own_session(self, close: "closer.Closer", number: int | None, left_open: list[str]) -> None:
-        import agw
+        import wag
         summary = (f"{'issue closed without a PR' if number is None else f'PR #{number} merged'}; sessions closed"
                    + (f"; left open: {', '.join(left_open)}" if left_open else '')
-                   + "; log: .workbench/state/relay-close.log")
-        mine = agw.my_pane()
+                   + "; log: .wagflow/state/relay-close.log")
+        mine = wag.my_pane()
         own = self.own_session(close)
         try:
-            agw.notify(mine or 'active', summary, title='workbench relay')
-        except (agw.CtlError, OSError) as err:
+            wag.notify(mine or 'active', summary, title='wagflow relay')
+        except (wag.CtlError, OSError) as err:
             self.log(f"could not notify: {err}")
         self.finish_close()
         if own is None:
@@ -1611,23 +1611,23 @@ class Relay:
                       f"in workspace {close.workspace_name}")
             return
         close.log(f"closing the relay session {own[1].get('id')}: {summary}")
-        agw.clear_restore(mine)
-        agw.close_session(own[1].get('id'))
+        wag.clear_restore(mine)
+        wag.close_session(own[1].get('id'))
 
     def own_session(self, close: "closer.Closer") -> tuple[str, dict] | None:
         """(my pane, my session) only when the session is provably the relay's: the name, this repo's
         workspace, and no pane but this one - a human's shell split beside it must never go with it."""
-        import agw
-        mine = agw.my_pane()
-        found = agw.find_pane(mine, agw.tree()) if mine else None
+        import wag
+        mine = wag.my_pane()
+        found = wag.find_pane(mine, wag.tree()) if mine else None
         own = found[1] if found else None
         if (own is None or (found[0].get('name') or '').casefold() != close.workspace_name.casefold()
-                or own.get('name') != f'#{close.issue} relay' or agw.panes_of(own) != [mine]):
+                or own.get('name') != f'#{close.issue} relay' or wag.panes_of(own) != [mine]):
             return None
         return mine, own
 
     def deliver_mail(self) -> None:
-        import agw
+        import wag
         import peerchat
         announced = set(self.state.get("announced", []))
         for peer in self.peers:
@@ -1658,10 +1658,10 @@ class Relay:
                     continue
                 try:
                     # Claude and Kimi take Return, which would land in a running turn: ring between turns.
-                    if peer.tool in ("claude", "kimi") and is_busy(agw.pane_text(peer.pane)):
+                    if peer.tool in ("claude", "kimi") and is_busy(wag.pane_text(peer.pane)):
                         raise peerchat.Refused('mid-turn; waiting for the agent to finish')
-                    text = peerchat.compose_text("Chat from Workbench: ",
-                                                 pointer_text(message, self.agmsg, self.hub_dir))
+                    text = peerchat.compose_text("Chat from WagFlow: ",
+                                                 pointer_text(message, self.wagmsg, self.hub_dir))
                     if self.dry_run:
                         self.log(f"[dry-run] would ring {peer.box}: {text}")
                         continue
@@ -1673,7 +1673,7 @@ class Relay:
                 except peerchat.AmbiguousComposer as refusal:
                     reason = str(refusal)
                     if peer.tool == 'claude':
-                        # #33: most often a greyed prompt suggestion. Agents the workbench launches
+                        # #33: most often a greyed prompt suggestion. Agents the WagFlow launches
                         # have them off; an adopted Claude needs it in the human's own settings.
                         reason += ('; if it is a greyed prompt suggestion, set "promptSuggestionEnabled": false'
                                    ' in ~/.claude/settings.json for this Claude')
@@ -1687,7 +1687,7 @@ class Relay:
                     # Next tick may retry only through peerchat's empty-composer precheck.
                     self.hold(peer, mid, str(failure), failed=True)
                     continue
-                except (agw.CtlError, OSError) as err:
+                except (wag.CtlError, OSError) as err:
                     self.hold(peer, mid, f"terminal not reachable: {err}")
                     continue
                 announced.add(mid)
@@ -2140,8 +2140,8 @@ class Relay:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="agworkbench relay: mail doorbell + PR watcher")
-    parser.add_argument("--hub", required=True, help="the workbench mailbox directory (.workbench)")
+    parser = argparse.ArgumentParser(description="wagflow relay: mail doorbell + PR watcher")
+    parser.add_argument("--hub", required=True, help="the WagFlow mailbox directory (.wagflow)")
     parser.add_argument("--claude-pane", required=True)
     parser.add_argument("--codex-pane", required=True, help="the implementer's pane (mailbox box 'codex')")
     parser.add_argument("--implementer-tool", choices=("codex", "claude", "kimi"), default="codex",
@@ -2154,7 +2154,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="seconds between usage-limit checks of each pane (#24)")
     parser.add_argument("--stall-minutes", type=float,
                         help="minutes idle before a stall pointer (#45; default: stallMinutes in "
-                             "~/.agworkbench.json, else 15; 0 = off)")
+                             "~/.wagflow.json, else 15; 0 = off)")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 

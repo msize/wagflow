@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  The right pane with "implementer": "kimi" - Kimi Code as the implementer for this workbench (#65).
+  The right pane with "implementer": "kimi" - Kimi Code as the implementer for this WagFlow (#65).
 
 .DESCRIPTION
   The sibling of pane-codex.ps1 and pane-implementer-claude.ps1. Launch policy, and why:
@@ -29,7 +29,7 @@
       An auto-update re-executes kimi.exe as a child of the running one: an extra process under the
       pane that the failover's stop (a tree kill of the root kimi.exe) has to take down with it.
 
-  Extra arguments from "kimiArgs" in ~/.agworkbench.json pass through, except anything that would
+  Extra arguments from "kimiArgs" in ~/.wagflow.json pass through, except anything that would
   re-decide the approval mode, the session, the agent or its directories - in any spelling kimi takes.
 #>
 param([Parameter(Mandatory = $true)] [string] $Checkout,
@@ -38,8 +38,8 @@ param([Parameter(Mandatory = $true)] [string] $Checkout,
       [switch] $WhatIfOnly)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Workbench.ps1')
-$config = Get-WorkbenchConfig
+. (Join-Path $PSScriptRoot 'WagFlow.Common.ps1')
+$config = Get-WagFlowConfig
 
 $kimi = Find-KimiExe $config
 if (-not $kimi) {
@@ -55,7 +55,7 @@ if (-not $WhatIfOnly) {
     $problem = Get-KimiProblem $config
     if ($problem) {
         Write-Host "Cannot start the Kimi implementer: $problem"
-        Write-Host "Repair, then: github-workbench $(Quote $Issue)"
+        Write-Host "Repair, then: wagflow $(Quote $Issue)"
         exit 1
     }
 }
@@ -85,7 +85,7 @@ if ($Resume) {
 $kimiArgs = @('--yolo') + $modeArgs + $extra
 
 $shimDir = [string]$prepared.shimDir
-$environment = [ordered]@{ AGWORKBENCH = $script:Root; AI_HUB = (Join-Path $Checkout '.workbench'); AI_BOX = 'codex' }
+$environment = [ordered]@{ WAGFLOW = $script:Root; AI_HUB = (Join-Path $Checkout '.wagflow'); AI_BOX = 'codex' }
 foreach ($entry in $prepared.env.PSObject.Properties) { $environment[$entry.Name] = [string]$entry.Value }
 $environment['PATH'] = $shimDir + [IO.Path]::PathSeparator + $env:PATH
 
@@ -116,8 +116,8 @@ if ($resumed) {
     # Kimi takes no first prompt in interactive mode, and the relay rings each mail once: this note is
     # what it rings, so the resumed Kimi reads whatever arrived while it was down.
     $note = @"
-You were resumed after an agwinterm restart. You are still the IMPLEMENTER, in the RIGHT pane for $Issue.
-Read your unread workbench mail (python "$script:Lib\agmsg.py" list), then continue the step you were in
+You were resumed after a WagTerm restart. You are still the IMPLEMENTER, in the RIGHT pane for $Issue.
+Read your unread wagflow mail (python "$script:Lib\wagmsg.py" list), then continue the step you were in
 (critiquing the plan, implementing, or fixing review findings) and reply as your role says.
 "@
     $py = "import sys; sys.path.insert(0, sys.argv[1]); import hub; hub.reload_paths(); " +
@@ -125,5 +125,5 @@ Read your unread workbench mail (python "$script:Lib\agmsg.py" list), then conti
     $note | & python -c $py $script:Lib | Out-Null
 }
 
-Write-Host "agworkbench: Kimi implementer for $Issue in $Checkout - $($prepared.trust); git push and gh refused in its shell" -ForegroundColor DarkGray
+Write-Host "WagFlow: Kimi implementer for $Issue in $Checkout - $($prepared.trust); git push and gh refused in its shell" -ForegroundColor DarkGray
 & $kimi @kimiArgs

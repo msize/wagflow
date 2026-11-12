@@ -8,7 +8,7 @@ one set of safety checks (`check`), one way to delete (`remove`):
   issue session is closed. It waits until no `#N ...` session is left in the checkout's workspace, then
   checks and deletes. It runs with its cwd outside the checkout: on Windows nothing can delete a
   directory that is some process's cwd.
-- `sweep` (`github-workbench -Cleanup`): every checkout under checkoutRoot whose branch has no open PR,
+- `sweep` (`wagflow -Cleanup`): every checkout under checkoutRoot whose branch has no open PR,
   and whose issue is closed or whose branch has a merged or closed PR.
 
 A checkout is deleted only when it is provably ours and provably finished with: the directory is
@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-import agw
+import wag
 import closer
 import conductor
 import triage
@@ -46,8 +46,8 @@ BUILD_DIRS = frozenset({'target', 'node_modules', 'bin', 'obj'})
 AFTER_CLOSE_WAIT = 600.0        # how long after-close waits for the issue's sessions to go
 AFTER_CLOSE_POLL = 5.0
 RENAME_TRIES = 3
-LOG_NAME = '.agworkbench-cleanup.log'
-LOCK_DIR = '.agworkbench-cleanup'
+LOG_NAME = '.wagflow-cleanup.log'
+LOCK_DIR = '.wagflow-cleanup'
 CHECKOUT_NAME = re.compile(r'(?P<name>.+)-issue-(?P<number>[1-9][0-9]*)')
 LEFTOVER_NAME = re.compile(r'.+-issue-[1-9][0-9]*\.deleting-[0-9]+')
 QUEUE_BUSY = {'pending', 'launching', 'active'}
@@ -64,7 +64,7 @@ def stamp() -> str:
 
 
 def log(root: Path, checkout: Path | str, text: str) -> None:
-    """One line per decision in `<checkoutRoot>/.agworkbench-cleanup.log`, which outlives the checkout."""
+    """One line per decision in `<checkoutRoot>/.wagflow-cleanup.log`, which outlives the checkout."""
     line = f"{checkout}: {text}"
     try:
         path = Path(root) / LOG_NAME
@@ -76,7 +76,7 @@ def log(root: Path, checkout: Path | str, text: str) -> None:
 
 def close_log(checkout: Path, text: str) -> None:
     """A refusal also goes to the checkout's own close log, next to the close it follows."""
-    path = Path(checkout) / '.workbench' / 'state' / 'relay-close.log'
+    path = Path(checkout) / '.wagflow' / 'state' / 'relay-close.log'
     if not path.parent.is_dir():
         return
     try:
@@ -104,12 +104,12 @@ def same_path(a: Path, b: Path) -> bool:
 
 
 def checkout_identity(checkout: Path) -> dict:
-    """{'repo', 'number'} of a workbench clone: the number from its directory name, the repo from its
+    """{'repo', 'number'} of a WagFlow clone: the number from its directory name, the repo from its
     origin. Raises CleanupError for anything that is not one."""
     checkout = Path(checkout)
     match = CHECKOUT_NAME.fullmatch(checkout.name)
     if not match:
-        raise CleanupError(f'not a workbench checkout name (<repo>[-<queue>]-issue-<N>): {checkout.name}')
+        raise CleanupError(f'not a WagFlow checkout name (<repo>[-<queue>]-issue-<N>): {checkout.name}')
     if not (checkout / '.git').is_dir():
         raise CleanupError('no .git directory')
     done = git(checkout, 'remote', 'get-url', 'origin')
@@ -144,13 +144,13 @@ def live_sessions(repo: str, issue: int | str, tree, workspace: str | None = Non
     conductor.session_numbers, helpers count: one still open means the loop is not over."""
     workspace_name = (workspace or repo.split('/')[-1]).casefold()
     prefix = f'#{issue}'
-    return [session.get('name') for workspace, session in agw.sessions(tree)
+    return [session.get('name') for workspace, session in wag.sessions(tree)
             if (workspace.get('name') or '').casefold() == workspace_name
             and ((session.get('name') or '') == prefix or (session.get('name') or '').startswith(prefix + ' '))]
 
 
 def queue_reason(checkout: Path) -> str | None:
-    path = Path(checkout) / '.workbench' / 'state' / 'queue-member.json'
+    path = Path(checkout) / '.wagflow' / 'state' / 'queue-member.json'
     if not path.exists():
         return None
     try:
@@ -202,7 +202,7 @@ def check(checkout: Path, *, repo: str, issue: int | str, root: Path, tree, pr_h
     if reasons:
         return reasons                  # never run anything else on a directory that is not ours
     try:
-        workspace = closer.workspace_of(checkout / '.workbench', repo)
+        workspace = closer.workspace_of(checkout / '.wagflow', repo)
     except ValueError as err:
         return reasons + [f'sessions: unknown workspace ({err})']
     if tree is None:
@@ -385,15 +385,15 @@ def after_close_argv(checkout: Path, repo: str, issue: int | str, pr: int | None
     if pr is not None:
         argv += ['--pr', str(pr)]
     argv += ['--mode', mode]
-    if os.environ.get('AGWINTERM_PIPE'):
+    if os.environ.get('WAGTERM_PIPE'):
         # A process started through WMI gets the user's default environment, not ours.
-        argv += ['--pipe', os.environ['AGWINTERM_PIPE']]
+        argv += ['--pipe', os.environ['WAGTERM_PIPE']]
     return argv
 
 
 def wmi_create(command_line: str, cwd: str) -> int:
     """Start a process through WMI (Win32_Process.Create). Its parent is the WMI provider host, so it
-    is outside the job of the agwinterm session that asked for it and outlives that session's close."""
+    is outside the job of the WagTerm session that asked for it and outlives that session's close."""
     def quoted(text):
         return "'" + text.replace("'", "''") + "'"
     script = ('$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=' +
@@ -410,7 +410,7 @@ def wmi_create(command_line: str, cwd: str) -> int:
 def start_after_close(checkout: Path, repo: str, issue: int | str, pr: int | None, mode: str, *, popen=subprocess.Popen,
                       wmi=wmi_create) -> tuple[int | None, str]:
     """Start `after-close` so that closing the caller's session does not end it, with its cwd outside
-    the checkout. Returns (pid, how). agwinterm kills a session's job when the session closes and its
+    the checkout. Returns (pid, how). wagterm kills a session's job when the session closes and its
     job refuses breakaway, so on Windows: breakaway if the job allows it, else WMI, else (logged by the
     caller) a plain detached process, which such a job still ends."""
     checkout = Path(checkout).resolve()
@@ -439,7 +439,7 @@ def pr_head_of(repo: str, pr: int, gh=conductor.gh_json) -> str | None:
 
 def after_close(checkout: Path, repo: str, issue: int, pr: int | None, mode: str, *, read_tree=None, gh=conductor.gh_json,
                 clock: Callable[[], float] = time.monotonic, pause: Callable[[float], None] = time.sleep) -> int:
-    read_tree = read_tree or agw.tree
+    read_tree = read_tree or wag.tree
     checkout = Path(checkout).resolve()
     root = checkout.parent
     if mode not in ('merged', 'build'):
@@ -451,14 +451,14 @@ def after_close(checkout: Path, repo: str, issue: int, pr: int | None, mode: str
     while True:
         try:
             snapshot = read_tree()
-            live = live_sessions(repo, issue, snapshot, closer.workspace_of(checkout / '.workbench', repo))
+            live = live_sessions(repo, issue, snapshot, closer.workspace_of(checkout / '.wagflow', repo))
         except ValueError as err:
             # An unreadable membership: which workspace to wait on is unknown, so nothing is proven gone.
             reason = f'kept: {err}'
             log(root, checkout, reason)
             close_log(checkout, reason)
             return 1
-        except (agw.CtlError, OSError) as err:
+        except (wag.CtlError, OSError) as err:
             snapshot, live = None, [f'the session tree could not be read: {err}']
         if not live:
             break
@@ -509,10 +509,10 @@ def sweep(root: Path, *, repo: str | None = None, dry_run: bool = False, build_o
     if not root.is_dir():
         out(f'no checkout root {root}')
         return 0
-    read_tree = read_tree or agw.tree
+    read_tree = read_tree or wag.tree
     try:
         snapshot = read_tree()
-    except (agw.CtlError, OSError):
+    except (wag.CtlError, OSError):
         snapshot = None                  # check() then keeps every checkout: "sessions: unknown"
     mode = 'build' if build_only else 'merged'
     wanted = repo.lower() if repo else None
@@ -605,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == 'after-close':
         if args.pipe:
-            os.environ['AGWINTERM_PIPE'] = args.pipe
+            os.environ['WAGTERM_PIPE'] = args.pipe
         try:
             return after_close(Path(args.checkout), args.repo, args.issue, args.pr, args.mode)
         except Exception as err:        # noqa: BLE001 - detached: nobody sees a traceback, the log must

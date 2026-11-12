@@ -12,7 +12,7 @@ their evidence (settled pane hashes) in the object, so the relay can loop on the
 delivering mail, and the conductor can advance one check per tick without blocking its queue.
 
 - Helpers (`#N revmux rK`, `#N your review`, `#N suite <label>` in the checkout's workspace, `workspace_of`) close on their own evidence,
-  first and independently of the agents. wb.py launches them in agwinterm's DIRECT command mode: the
+  first and independently of the agents. wb.py launches them in WagTerm's DIRECT command mode: the
   pane runs the helper with no shell around it, and when it ends the pane stays on screen with its
   input closed - nothing can be typed into it and nothing more is printed. So a helper closes when
   its completion marker exists (`state/helpers/<pane>.done`, written as its last act with the
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-import agw
+import wag
 import limits
 
 CLOSE_WAIT = 600.0       # how long a close waits for the loop to be provably over (#27)
@@ -85,7 +85,7 @@ def pending_number(key: int | str) -> int | None:
 
 
 def workspace_of(hub_dir: Path, repo: str) -> str:
-    """The agwinterm workspace of this checkout's sessions (#66): the one its queue membership records
+    """The wagterm workspace of this checkout's sessions (#66): the one its queue membership records
     (a named queue's own), else the repo's name - no membership (a manual launch), or one written
     before #66. An unreadable membership raises ValueError: a wrong guess would find no sessions, and
     "nothing is live" is what lets a close or a cleanup go ahead."""
@@ -244,7 +244,7 @@ class Closer:
         if not self.issue:
             return []
         name = re.compile(rf'#{self.issue} ({HELPER_NAMES})')
-        return [session for workspace, session in agw.sessions(snapshot)
+        return [session for workspace, session in wag.sessions(snapshot)
                 if (workspace.get('name') or '').casefold() == self.workspace_name.casefold()
                 and name.fullmatch(session.get('name') or '')]
 
@@ -254,9 +254,9 @@ class Closer:
     def step_helpers(self, gate: Callable[[], bool] | None = None) -> list[str]:
         """One look at every helper; closes those proven done and untouched. Returns what stays open."""
         left_open = []
-        snapshot = agw.tree()
+        snapshot = wag.tree()
         for session in self.helper_sessions(snapshot):
-            panes = agw.panes_of(session)
+            panes = wag.panes_of(session)
             reason = self.helper_reason(panes, session)
             label = f"{session.get('name')} ({session.get('id')})"
             if reason:
@@ -280,8 +280,8 @@ class Closer:
     def _close_helper(self, session: dict, panes: list[str], why: str) -> None:
         self.log(why)
         for pane in panes:
-            agw.clear_restore(pane)
-        agw.close_session(session.get('id'))
+            wag.clear_restore(pane)
+        wag.close_session(session.get('id'))
         self.marker_path(panes[0]).unlink(missing_ok=True)
 
     def _decide(self, session_id: str, text: str) -> None:
@@ -312,11 +312,11 @@ class Closer:
         exists and names a result mail that has been read. Whatever its pane shows - no settle, no
         rows compared. Never the human's revdiff, never a split session. Returns the names it closed."""
         closed = []
-        for session in self.helper_sessions(agw.tree()):
+        for session in self.helper_sessions(wag.tree()):
             session_id = session.get('id')
             name = session.get('name') or ''
             label = f"{name} ({session_id})"
-            panes = agw.panes_of(session)
+            panes = wag.panes_of(session)
             reason, marker = None, None
             if name.endswith(' your review'):
                 reason = "the human's revdiff closes only with the human or the loop's end"
@@ -356,8 +356,8 @@ class Closer:
         except (OSError, ValueError):
             return 'unreadable completion marker'
         try:
-            text = agw.pane_text(panes[0])
-        except (agw.CtlError, OSError) as err:
+            text = wag.pane_text(panes[0])
+        except (wag.CtlError, OSError) as err:
             return f'pane unreadable: {err}'
         shells = session.get('foregroundShells') or [session.get('foregroundShell')]
         if shells and shells[0]:
@@ -423,8 +423,8 @@ class Closer:
             hard.append('.git/index.lock exists')
         for peer in self.peers:
             try:
-                text = agw.pane_text(peer.pane)
-            except (agw.CtlError, OSError) as err:
+                text = wag.pane_text(peer.pane)
+            except (wag.CtlError, OSError) as err:
                 hard.append(f'{peer.box} pane unreadable: {err}')
                 continue
             state = self.settle(peer.pane, text)
@@ -436,16 +436,16 @@ class Closer:
 
     def close_issue_session(self) -> None:
         agents = {peer.pane for peer in self.peers}
-        snapshot = agw.tree()
-        issue_session = next((session for _, session in agw.sessions(snapshot)
-                              if set(agw.panes_of(session)) == agents), None)
+        snapshot = wag.tree()
+        issue_session = next((session for _, session in wag.sessions(snapshot)
+                              if set(wag.panes_of(session)) == agents), None)
         if issue_session is None:
             self.log('the issue session is already gone')
             return
         self.log(f"closing the issue session {issue_session.get('name')} ({issue_session.get('id')})")
         for pane in sorted(agents):
-            agw.clear_restore(pane)
-        agw.close_session(issue_session.get('id'))
+            wag.clear_restore(pane)
+        wag.close_session(issue_session.get('id'))
 
 
 def idle_blockers(peer, text: str) -> list[str]:
@@ -461,7 +461,7 @@ def idle_blockers(peer, text: str) -> list[str]:
     if content is None or not peerchat.looks_empty(profile, content):
         reason = f'{peer.box} composer is not provably empty'
         if peer.tool == 'claude':
-            reason += (' (a greyed prompt suggestion? agents the workbench launches have them off;'
+            reason += (' (a greyed prompt suggestion? agents the WagFlow launches have them off;'
                        ' for an adopted Claude set "promptSuggestionEnabled": false in ~/.claude/settings.json)')
         reasons.append(reason)
     return reasons
@@ -471,4 +471,4 @@ def relay_alive(repo: str, issue: str, snapshot, workspace: str | None = None) -
     """Is this issue's relay session (`#N relay` in its workspace: the queue's, #66, else the repo's) in the tree?"""
     workspace_name = (workspace or repo.split('/')[-1]).casefold()
     return any((workspace.get('name') or '').casefold() == workspace_name and session.get('name') == f'#{issue} relay'
-               for workspace, session in agw.sessions(snapshot))
+               for workspace, session in wag.sessions(snapshot))

@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
-import agw
+import wag
 import hub
 import wb
 
@@ -29,13 +29,13 @@ class QueueReports(unittest.TestCase):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb queue ' + uuid.uuid4().hex)
         self.folder.mkdir()
         self.addCleanup(shutil.rmtree, self.folder)
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.loop = str(uuid.uuid4())
         self.q.atomic_json(self.state / 'queue-member.json', dict(queue=str(self.folder / 'queue.json'), repo='o/r', number=1))
         self.q.atomic_json(self.state / 'claude.json', dict(sessionId=self.loop))
-        self.enterContext(patch.dict(os.environ, AI_HUB=str(self.folder / '.workbench'), CLAUDE_CODE_SESSION_ID=self.loop))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('terminal access')))
+        self.enterContext(patch.dict(os.environ, AI_HUB=str(self.folder / '.wagflow'), CLAUDE_CODE_SESSION_ID=self.loop))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('terminal access')))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
 
     def report(self, state, pr=None, reason=None):
@@ -95,7 +95,7 @@ class QueueReports(unittest.TestCase):
         with self.assertRaises(self.q.QueueError):
             self.q.write_loop_state(self.folder, 'pr-open', 'https://github.com/o/r/pull/2', cause='environment')
 
-    def test_the_relay_reports_with_the_workbench_loop_id_not_a_runtime(self):
+    def test_the_relay_reports_with_the_wagflow_loop_id_not_a_runtime(self):
         # #45: the relay is not a Claude runtime; it passes the id claude.json holds, and only that id.
         with patch.dict(os.environ):
             os.environ.pop('CLAUDE_CODE_SESSION_ID')
@@ -231,7 +231,7 @@ class QueueReports(unittest.TestCase):
 class HelperWorkspace(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {}, clear=True))
-        self.tree = self.enterContext(patch.object(agw, 'tree', return_value={
+        self.tree = self.enterContext(patch.object(wag, 'tree', return_value={
             'workspaces': [
                 {'id': 'active-workspace', 'active': True,
                  'sessions': [{'id': 'active-session'}]},
@@ -239,12 +239,12 @@ class HelperWorkspace(unittest.TestCase):
                     {'id': 'caller-session', 'paneIds': ['caller-left', 'caller-right']},
                     {'id': 'unsplit-session'}]},
             ]}))
-        self.request = self.enterContext(patch.object(agw, 'request', return_value='new-session'))
+        self.request = self.enterContext(patch.object(wag, 'request', return_value='new-session'))
         self.stderr = io.StringIO()
         self.enterContext(contextlib.redirect_stderr(self.stderr))
 
     def test_both_helpers_use_callers_workspace_even_when_another_is_active(self):
-        os.environ.update(AGWINTERM_PANE_ID='caller-right', AGWINTERM_SESSION_ID='active-session')
+        os.environ.update(WAGTERM_PANE_ID='caller-right', WAGTERM_SESSION_ID='active-session')
         for name, select in [('revmux', False), ('human-review', True)]:
             self.assertEqual('new-session', wb.open_session(name, Path('checkout'), ['app', 'arg one'], select))
             args = self.request.call_args.kwargs['args']
@@ -258,14 +258,14 @@ class HelperWorkspace(unittest.TestCase):
         self.assertEqual('', self.stderr.getvalue())
 
     def test_session_id_is_used_when_pane_id_is_absent(self):
-        os.environ['AGWINTERM_SESSION_ID'] = 'unsplit-session'
+        os.environ['WAGTERM_SESSION_ID'] = 'unsplit-session'
         wb.open_session('revmux', Path('checkout'), ['app'], False)
         self.assertEqual('caller-workspace', self.request.call_args.kwargs['args']['workspace'])
         self.assertEqual('', self.stderr.getvalue())
 
     def test_unknown_or_missing_pane_omits_workspace_and_warns_once(self):
         for pane in ['', 'missing-pane']:
-            os.environ['AGWINTERM_PANE_ID'] = pane
+            os.environ['WAGTERM_PANE_ID'] = pane
             self.stderr.seek(0)
             self.stderr.truncate()
             wb.open_session('revmux', Path('checkout'), ['app'], False)
@@ -275,7 +275,7 @@ class HelperWorkspace(unittest.TestCase):
 
 
 def parse_windows(line):
-    """The argv agwinterm's direct mode makes of a session command: CommandLineToArgvW (#33)."""
+    """The argv WagTerm's direct mode makes of a session command: CommandLineToArgvW (#33)."""
     import ctypes
     from ctypes import wintypes
     parse = ctypes.windll.shell32.CommandLineToArgvW
@@ -288,7 +288,7 @@ def parse_windows(line):
 
 
 def host_refusal(line):
-    """agwinterm's own check of a direct-mode command (SessionCommand.cs): the reason it refuses, or None."""
+    """WagTerm's own check of a direct-mode command (SessionCommand.cs): the reason it refuses, or None."""
     argv = parse_windows(line)
     if len(argv[0].encode('utf-8')) >= 260:
         return 'app'
@@ -327,14 +327,14 @@ AWKWARD = {'Checkout': 'C:\\dir with space\\', 'Base': 'it\'s "quoted" \u2018typ
 
 
 class HelperCommand(unittest.TestCase):
-    """#33: helpers run in agwinterm's direct mode, so their command line is Windows-quoted. #86: their
+    """#33: helpers run in WagTerm's direct mode, so their command line is Windows-quoted. #86: their
     parameters go into a launch file, so that line stays short whatever the parameters are."""
 
     def test_the_command_is_short_and_the_parameters_are_in_the_launch_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             argv = wb.pane_command(root, 'revmux-r3-2', 'run-revmux.ps1', **AWKWARD)
-            launcher = root / '.workbench' / 'state' / 'helpers' / 'launch-revmux-r3-2.ps1'
+            launcher = root / '.wagflow' / 'state' / 'helpers' / 'launch-revmux-r3-2.ps1'
             self.assertEqual(['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', str(launcher)], argv[1:])
             self.assertRegex(Path(argv[0]).name.lower(), r'^(pwsh|powershell)(\.exe)?$')
             self.assertTrue(launcher.read_bytes().startswith(b'\xef\xbb\xbf'), 'BOM: Windows PowerShell 5.1 reads UTF-8')
@@ -368,32 +368,32 @@ class HelperCommand(unittest.TestCase):
         self.assertEqual('no command', wb.fits_host([]))
 
     def test_a_command_past_the_limits_is_refused_before_session_new(self):
-        with patch.object(agw, 'request') as request, patch.object(agw, 'my_pane', return_value=None):
+        with patch.object(wag, 'request') as request, patch.object(wag, 'my_pane', return_value=None):
             for argv in (['x' * 260], ['app', *['a'] * 17], ['app', 'y' * 2048]):
                 with self.subTest(argv=argv[:2]), self.assertRaises(SystemExit) as refused:
                     wb.open_session('revmux', Path('checkout'), argv, False)
                 self.assertTrue(str(refused.exception).startswith(
-                    "wb: helper command exceeds agwinterm's session.new limits (app 259 bytes, 16 arguments, "
+                    "wb: helper command exceeds WagTerm's session.new limits (app 259 bytes, 16 arguments, "
                     "2047 bytes each): "), refused.exception)
             request.assert_not_called()
 
 
 class HelperLaunchLimits(unittest.TestCase):
-    """#86: every helper session wb.py opens fits agwinterm's session.new limits, whatever its parameters."""
+    """#86: every helper session wb.py opens fits WagTerm's session.new limits, whatever its parameters."""
 
     def setUp(self):
         # A long checkout path with spaces, a quote and non-ASCII, still inside MAX_PATH for the scope file.
         base = Path(__file__).resolve().parent.parent / ('test wb launch ' + uuid.uuid4().hex)
         self.addCleanup(shutil.rmtree, base, True)
         self.folder = base / ("it's a checkout \u00e9\u65e5 " + 'd' * max(1, 150 - len(str(base))))
-        (self.folder / '.workbench/review').mkdir(parents=True)
+        (self.folder / '.wagflow/review').mkdir(parents=True)
         self.scope = self.folder / ("scope it's \u00e9 " + 's' * max(1, 200 - len(str(self.folder)) - 20) + '.md')
         self.scope.write_text('scope', encoding='utf-8')
         self.assertGreaterEqual(len(str(self.scope)), 190)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'), 'AI_BOX': 'codex'}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'), 'AI_BOX': 'codex'}))
         self.enterContext(patch.object(wb, 'issue_number', return_value='86'))
-        self.enterContext(patch.object(agw, 'my_pane', return_value=None))
-        self.request = self.enterContext(patch.object(agw, 'request', return_value='sid'))
+        self.enterContext(patch.object(wag, 'my_pane', return_value=None))
+        self.request = self.enterContext(patch.object(wag, 'request', return_value='sid'))
         self.opened = self.enterContext(patch.object(wb, 'open_session', wraps=wb.open_session))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
@@ -411,7 +411,7 @@ class HelperLaunchLimits(unittest.TestCase):
         return command
 
     def limited_round(self):
-        review = self.folder / '.workbench/review'
+        review = self.folder / '.wagflow/review'
         (review / 'revmux-r3.md').write_text('limited', encoding='utf-8')
         (review / 'revmux-r3.json').write_text(json.dumps({'run': 'r3', 'dir': 'x', 'scope': str(self.scope)}),
                                                encoding='utf-8')
@@ -421,7 +421,7 @@ class HelperLaunchLimits(unittest.TestCase):
             'revmux': ('revmux', '--round', '3', '--scope', str(self.scope)),
             'rerun with --after': ('revmux', '--round', '3', '--rerun', '--after', '30', '--profile', 'claude-only'),
             'suite': ('suite', '--label', 'abc1234', '--', 'python', *[f'word{i}' for i in range(29)], 'z' * 3000),
-            'human-review': ('human-review', '--base', 'origin/main'),
+            'human-review': ('human-review', '--base', 'origin/master'),
         }
         for name, argv in launches.items():
             with self.subTest(name):
@@ -447,7 +447,7 @@ class HelperLaunchLimits(unittest.TestCase):
         self.launch('suite', '--label', 'abc1234', '--', *command)
         argv = self.opened.call_args.args[2]
         self.assertEqual([str(wb.HERE / 'run_helper.py'), '--args-file'], argv[1:3])
-        self.assertEqual(['--hub', str(self.folder.resolve() / '.workbench'), '--label', 'abc1234', '--to', 'codex', '--',
+        self.assertEqual(['--hub', str(self.folder.resolve() / '.wagflow'), '--label', 'abc1234', '--to', 'codex', '--',
                           *command], run_helper.read_args_file(None, argv[2:]))
 
     def test_a_rerun_refused_for_its_size_puts_the_limited_report_back(self):
@@ -456,10 +456,10 @@ class HelperLaunchLimits(unittest.TestCase):
                 patch.object(sys, 'argv', ['wb.py', 'revmux', '--round', '3', '--rerun']), \
                 self.assertRaises(SystemExit) as refused:
             wb.main()
-        self.assertIn("exceeds agwinterm's session.new limits", str(refused.exception))
+        self.assertIn("exceeds WagTerm's session.new limits", str(refused.exception))
         self.request.assert_not_called()
         self.assertEqual(['revmux-r3.json', 'revmux-r3.md'],
-                         sorted(p.name for p in (self.folder / '.workbench/review').iterdir()))
+                         sorted(p.name for p in (self.folder / '.wagflow/review').iterdir()))
 
 
 class WaitMail(unittest.TestCase):
@@ -475,8 +475,8 @@ class WaitMail(unittest.TestCase):
         self.on_sleep = lambda: None
         self.enterContext(patch.object(wb, 'now', lambda: self.t))
         self.enterContext(patch.object(wb, 'pause', self.advance))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('terminal request')))
-        self.enterContext(patch.object(agw, 'tree', side_effect=AssertionError('terminal tree lookup')))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('terminal request')))
+        self.enterContext(patch.object(wag, 'tree', side_effect=AssertionError('terminal tree lookup')))
         self.enterContext(patch.object(wb.subprocess, 'run', side_effect=AssertionError('subprocess run')))
         self.enterContext(patch.object(wb.subprocess, 'Popen', side_effect=AssertionError('subprocess Popen')))
 
@@ -612,11 +612,11 @@ class WaitMail(unittest.TestCase):
         hub.save_registry({'agents': {'reviewer': {'box': 'reviewer', 'pane': 'registered-pane'},
                                       'codex': {'box': 'codex', 'pane': 'other-pane'}}})
         cases = [
-            (['--box', 'codex'], {'AI_BOX': 'claude', 'AGWINTERM_PANE_ID': 'registered-pane'}, 'codex'),
-            ([], {'AI_BOX': 'claude', 'AGWINTERM_PANE_ID': 'registered-pane'}, 'claude'),
-            ([], {'AGWINTERM_PANE_ID': 'registered-pane', 'AGWINTERM_SESSION_ID': 'other-pane'}, 'reviewer'),
-            ([], {'AGWINTERM_SESSION_ID': 'registered-pane'}, 'reviewer'),
-            ([], {'AGWINTERM_PANE_ID': 'unknown-pane'}, 'claude'),
+            (['--box', 'codex'], {'AI_BOX': 'claude', 'WAGTERM_PANE_ID': 'registered-pane'}, 'codex'),
+            ([], {'AI_BOX': 'claude', 'WAGTERM_PANE_ID': 'registered-pane'}, 'claude'),
+            ([], {'WAGTERM_PANE_ID': 'registered-pane', 'WAGTERM_SESSION_ID': 'other-pane'}, 'reviewer'),
+            ([], {'WAGTERM_SESSION_ID': 'registered-pane'}, 'reviewer'),
+            ([], {'WAGTERM_PANE_ID': 'unknown-pane'}, 'claude'),
             ([], {}, 'claude'),
         ]
         for args, env, expected in cases:
@@ -698,10 +698,10 @@ class RevmuxProfile(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb revmux ' + uuid.uuid4().hex)
-        (self.folder / '.workbench/state').mkdir(parents=True)
+        (self.folder / '.wagflow/state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         (self.folder / 'scope.md').write_text('scope', encoding='utf-8')
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench')}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow')}))
         self.opened = self.enterContext(patch.object(wb, 'open_session', return_value='sid'))
         self.enterContext(patch.object(wb, 'issue_number', return_value='20'))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
@@ -712,7 +712,7 @@ class RevmuxProfile(unittest.TestCase):
         return launched(self.opened)
 
     def save(self, text):
-        (self.folder / '.workbench/state/implementer.json').write_text(text, encoding='utf-8')
+        (self.folder / '.wagflow/state/implementer.json').write_text(text, encoding='utf-8')
 
     def test_no_saved_implementer_keeps_comprehensive(self):
         self.assertIn("-Profile 'comprehensive'", self.run_round())
@@ -754,14 +754,14 @@ def clean_pr(**changes):
 
 
 def make_origin(folder, repo='o/r'):
-    """folder as the workbench's checkout of repo: gh calls name it from this origin (#71)."""
+    """folder as the WagFlow's checkout of repo: gh calls name it from this origin (#71)."""
     for argv in (['git', 'init', '-q', str(folder)],
                  ['git', '-C', str(folder), 'remote', 'add', 'origin', f'https://github.com/{repo}.git']):
         subprocess.run(argv, check=True, capture_output=True)
 
 
 def answers_origin(fake, repo='o/r'):
-    """A subprocess.run fake that also answers the workbench's origin lookup (#71)."""
+    """A subprocess.run fake that also answers the WagFlow's origin lookup (#71)."""
     def run(argv, **kwargs):
         if argv[:1] == ['git'] and argv[-3:] == ['remote', 'get-url', 'origin']:
             return subprocess.CompletedProcess(argv, 0, f'https://github.com/{repo}.git\n', '')
@@ -778,12 +778,12 @@ class MergeCheck(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb merge ' + uuid.uuid4().hex)
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
         make_origin(self.folder)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'), 'AI_BOX': 'claude'}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'), 'AI_BOX': 'claude'}))
         hub.reload_paths()
         self.seen([7])
         self.out = io.StringIO()
@@ -793,7 +793,7 @@ class MergeCheck(unittest.TestCase):
         (self.state / 'relay.json').write_text(json.dumps({'seen_open': numbers}), encoding='utf-8')
 
     def mail(self, sender, folder=''):
-        box = self.folder / '.workbench/inbox/claude' / folder
+        box = self.folder / '.wagflow/inbox/claude' / folder
         box.mkdir(parents=True, exist_ok=True)
         (box / f'm-{sender}.md').write_text(f'---\nid: m-{sender}\nfrom: {sender}\nto: claude\nsubject: note\n---\nbody\n',
                                             encoding='utf-8')
@@ -1025,13 +1025,13 @@ class MergeReadiness(unittest.TestCase):
 
     def setUp(self):
         self.folder = scratch(self, 'wb-ready-')
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         make_origin(self.folder)
         self.addCleanup(hub.reload_paths)
-        self.config = self.folder / 'config.json'                               # never the real ~/.agworkbench.json
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'), 'AI_BOX': 'claude',
-                                                 'AGWORKBENCH_CONFIG': str(self.config)}))
+        self.config = self.folder / 'config.json'                               # never the real ~/.wagflow.json
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'), 'AI_BOX': 'claude',
+                                                 'WAGFLOW_CONFIG': str(self.config)}))
         hub.reload_paths()
         (self.state / 'relay.json').write_text(json.dumps({'seen_open': [7]}), encoding='utf-8')
         self.out = io.StringIO()
@@ -1262,7 +1262,7 @@ class MergeReadiness(unittest.TestCase):
                                   check('ext', 'fail', 'ERROR', link='https://ci.example/b/1'), check('ok', 'pass')])
         with patch.object(sys, 'argv', ['wb.py', 'ci-log', '--pr', '7']):
             self.assertEqual(0, wb.main())
-        path = self.folder / '.workbench/review/ci-r1.log'
+        path = self.folder / '.wagflow/review/ci-r1.log'
         text = path.read_text(encoding='utf-8')
         self.assertIn(['gh', 'run', 'view', '11', '--log-failed', '--job', '22', '--repo', 'o/r'], calls)
         self.assertIn('line 399', text)
@@ -1270,14 +1270,14 @@ class MergeReadiness(unittest.TestCase):
         self.assertIn('ext ERROR - external CI, no log here: https://ci.example/b/1', text)
         with patch.object(sys, 'argv', ['wb.py', 'ci-log', '--pr', '7']):
             wb.main()
-        self.assertTrue((self.folder / '.workbench/review/ci-r2.log').exists())
+        self.assertTrue((self.folder / '.wagflow/review/ci-r2.log').exists())
 
     def test_ci_log_never_passes_a_gh_error_off_as_the_log(self):
         # r22 m3
         self.gh_boundary([check('build', 'fail', link='https://github.com/o/r/actions/runs/11/job/22')], view_fails=True)
         with patch.object(sys, 'argv', ['wb.py', 'ci-log', '--pr', '7']), contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(2, wb.main())
-        text = (self.folder / '.workbench/review/ci-r1.log').read_text(encoding='utf-8')
+        text = (self.folder / '.wagflow/review/ci-r1.log').read_text(encoding='utf-8')
         self.assertIn('(gh run view failed: run 11 is still in progress', text)
         self.assertIn('no job log could be fetched', err.getvalue())
 
@@ -1341,14 +1341,14 @@ class UpdateCheck(unittest.TestCase):
 
     def setUp(self):
         self.repo = scratch(self, 'wb-update-')     # a git repo: never inside the checkout (r22b)
-        (self.repo / '.workbench').mkdir(parents=True)
-        self.config = self.repo / '.workbench/config.json'                     # never the real ~/.agworkbench.json
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.repo / '.workbench'),
-                                                 'AGWORKBENCH_CONFIG': str(self.config)}))
+        (self.repo / '.wagflow').mkdir(parents=True)
+        self.config = self.repo / '.wagflow/config.json'                     # never the real ~/.wagflow.json
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.repo / '.wagflow'),
+                                                 'WAGFLOW_CONFIG': str(self.config)}))
         self.out = io.StringIO()
         self.enterContext(contextlib.redirect_stdout(self.out))
         self.git('init', '-q', '-b', 'main')
-        (self.repo / '.gitignore').write_text('.workbench/\n')
+        (self.repo / '.gitignore').write_text('.wagflow/\n')
         self.write('a.txt', 'one\ntwo\nthree\n')
         self.commit('base')
         self.git('checkout', '-q', '-b', 'issue')
@@ -1483,14 +1483,14 @@ class UpdateCheck(unittest.TestCase):
         return base
 
     def recorded(self):
-        return json.loads((self.repo / '.workbench/state/update-check.json').read_text(encoding='utf-8'))
+        return json.loads((self.repo / '.wagflow/state/update-check.json').read_text(encoding='utf-8'))
 
     def merge_round(self, kind, pr=7):
         with patch.object(sys, 'argv', ['wb.py', 'merge-round', '--pr', str(pr), '--kind', kind]):
             return wb.main()
 
     def rounds(self):
-        record = json.loads((self.repo / '.workbench/state/merge-rounds.json').read_text(encoding='utf-8'))
+        record = json.loads((self.repo / '.wagflow/state/merge-rounds.json').read_text(encoding='utf-8'))
         return {kind: record.get(kind, 0) for kind in ('update', 'conflict', 'conflict-small')}
 
     def test_up_to_three_conflict_regions_are_small(self):
@@ -1532,7 +1532,7 @@ class UpdateCheck(unittest.TestCase):
 
     def test_a_conflict_in_a_file_the_review_flagged_is_counted(self):
         base = self.conflict(name='src/flagged.txt')
-        review = self.repo / '.workbench/review'
+        review = self.repo / '.wagflow/review'
         review.mkdir()
         (review / 'revmux-r1.md').write_text(revmux_report([('Minor', 1)]).replace(
             '### finding 0\n\nevidence', '### finding 0\n\n`src/other.txt:4-5`\n\n`src/flagged.txt:4` evidence'),
@@ -1546,7 +1546,7 @@ class UpdateCheck(unittest.TestCase):
         self.assertEqual(0, self.check(base))
         self.assertIn('update: conflict (counted: src/flagged.txt was flagged by review)', self.out.getvalue())
         (review / 'revmux-r2.md').unlink()
-        (self.repo / '.workbench/state/follow-ups.json').write_text(json.dumps(
+        (self.repo / '.wagflow/state/follow-ups.json').write_text(json.dumps(
             [{'key': 'k', 'title': 't', 'file': 'src\\flagged.txt:12'}]), encoding='utf-8')
         self.out.truncate(0)
         self.assertEqual(0, self.check(base))
@@ -1561,14 +1561,14 @@ class UpdateCheck(unittest.TestCase):
         for word in ('refuses', 'Makefile', '--force', ''):
             self.assertEqual('', wb.location_file(word, token=True), word)
         self.assertEqual('Makefile', wb.location_file('Makefile'))              # a follow-up's file: any path
-        review = self.repo / '.workbench/review'
+        review = self.repo / '.wagflow/review'
         review.mkdir()
         (review / 'revmux-r1.md').write_text(revmux_report([('Major', 1)]).replace(
             '### finding 0\n\nevidence', '### finding 0\n\n`src/my file.py:3` and `refuses`\n\nevidence'),
             encoding='utf-8')
         self.assertEqual(0, self.check(self.conflict(name='src/my file.py')))
         self.assertIn('update: conflict (counted: src/my file.py was flagged by review)', self.out.getvalue())
-        (self.repo / '.workbench/state/follow-ups.json').write_text(json.dumps(
+        (self.repo / '.wagflow/state/follow-ups.json').write_text(json.dumps(
             [{'key': 'k', 'title': 't', 'file': 'app/[id]/page.tsx'}]), encoding='utf-8')
         self.out.truncate(0)
         self.assertEqual(0, self.check(self.conflict(name='app/[id]/page.tsx')))
@@ -1635,8 +1635,8 @@ class UpdateCheck(unittest.TestCase):
     def test_diff_noprefix_does_not_hide_a_flagged_file(self):
         # r1 m1: a noprefix diff has no a/ b/, so the path would never match.
         self.git('config', 'diff.noprefix', 'true')
-        (self.repo / '.workbench/state').mkdir(parents=True, exist_ok=True)
-        (self.repo / '.workbench/state/follow-ups.json').write_text(json.dumps(
+        (self.repo / '.wagflow/state').mkdir(parents=True, exist_ok=True)
+        (self.repo / '.wagflow/state/follow-ups.json').write_text(json.dumps(
             [{'key': 'k', 'title': 't', 'file': 'lib/x.py:4'}]), encoding='utf-8')
         self.assertEqual(0, self.check(self.conflict(name='lib/x.py')))
         self.assertIn('update: conflict (counted: lib/x.py was flagged by review)', self.out.getvalue())
@@ -1710,7 +1710,7 @@ class UpdateCheck(unittest.TestCase):
         self.assertIn('conflict round 1 of 3', self.out.getvalue())
         self.assertEqual(0, self.check(self.conflict(1)))
         record = self.recorded()
-        (self.repo / '.workbench/state/update-check.json').write_text(
+        (self.repo / '.wagflow/state/update-check.json').write_text(
             json.dumps({**record, 'head': self.reviewed}), encoding='utf-8')
         self.assertEqual(0, self.merge_round('conflict'))
         self.assertIn('conflict round 2 of 3', self.out.getvalue())
@@ -1722,7 +1722,7 @@ class UpdateCheck(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             self.assertEqual(2, self.merge_round('update'))
         self.assertIn('update-check said conflict for', err.getvalue())
-        self.assertFalse((self.repo / '.workbench/state/merge-rounds.json').exists())
+        self.assertFalse((self.repo / '.wagflow/state/merge-rounds.json').exists())
         self.git('checkout', '-q', 'main')
         self.write('d.txt', 'main only\n')
         self.commit('main moves cleanly')
@@ -1743,17 +1743,17 @@ class UpdateCheck(unittest.TestCase):
 class Settings(unittest.TestCase):
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb settings ' + uuid.uuid4().hex)
-        (self.folder / '.workbench/state').mkdir(parents=True)
+        (self.folder / '.wagflow/state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.config = self.folder / 'config.json'
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'),
-                                                 'AGWORKBENCH_CONFIG': str(self.config)}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'),
+                                                 'WAGFLOW_CONFIG': str(self.config)}))
         self.enterContext(patch.object(wb, 'issue_facts', return_value={'title': 'Plain', 'labels': []}))
-        self.enterContext(patch.object(wb, 'diff_lines', return_value=(0, 'origin/main')))
+        self.enterContext(patch.object(wb, 'diff_lines', return_value=(0, 'origin/master')))
 
     def printed(self, record=None):
         if record is not None:
-            (self.folder / '.workbench/state/implementer.json').write_text(record, encoding='utf-8')
+            (self.folder / '.wagflow/state/implementer.json').write_text(record, encoding='utf-8')
         out = io.StringIO()
         with contextlib.redirect_stdout(out), patch.object(sys, 'argv', ['wb.py', 'settings']):
             self.assertEqual(0, wb.main())
@@ -1794,7 +1794,7 @@ class Settings(unittest.TestCase):
 def revmux_report(sections=(), statuses=('ok',) * 4, extra='', no_findings=False):
     """A stub revmux --markdown report in the shape of the real ones (# title, ## sections, ### findings,
     ## Sources table last)."""
-    lines = ['# Review: workbench / r1', '', 'scope: `scope.md`', '']
+    lines = ['# Review: wagflow / r1', '', 'scope: `scope.md`', '']
     if extra:
         lines += [extra, '']
     for name, count in sections:
@@ -1813,19 +1813,19 @@ class ReviewRound(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb review ' + uuid.uuid4().hex)
-        self.state = self.folder / '.workbench/state'
-        self.reviews = self.folder / '.workbench/review'
+        self.state = self.folder / '.wagflow/state'
+        self.reviews = self.folder / '.wagflow/review'
         self.state.mkdir(parents=True)
         self.reviews.mkdir()
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
         make_origin(self.folder)
-        self.facts, self.lines = {'title': 'Plain issue', 'labels': []}, (0, 'origin/main')
+        self.facts, self.lines = {'title': 'Plain issue', 'labels': []}, (0, 'origin/master')
         self.enterContext(patch.object(wb, 'issue_facts', side_effect=lambda root: self.facts))
         self.enterContext(patch.object(wb, 'diff_lines', side_effect=lambda root: self.lines))
-        self.config = self.folder / 'agworkbench.json'
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'), 'AI_BOX': 'claude',
-                                                 'AGWORKBENCH_CONFIG': str(self.config)}))
+        self.config = self.folder / 'wagflow.json'
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'), 'AI_BOX': 'claude',
+                                                 'WAGFLOW_CONFIG': str(self.config)}))
         hub.reload_paths()
         (self.state / 'relay.json').write_text(json.dumps({'seen_open': [7]}), encoding='utf-8')
         self.out, self.err = io.StringIO(), io.StringIO()
@@ -1948,26 +1948,26 @@ class ReviewRound(unittest.TestCase):
 
     def test_the_title_falls_back_to_issue_md_when_gh_cannot_answer(self):
         self.facts = None
-        (self.folder / '.workbench/issue.md').write_text('# Batch: offline\n\nhttps://x\n', encoding='utf-8')
+        (self.folder / '.wagflow/issue.md').write_text('# Batch: offline\n\nhttps://x\n', encoding='utf-8')
         self.assertEqual(['review: continue'], self.majors([5]))
         self.assertEqual('title starts with Batch: (from issue.md; labels unknown)', self.entries()[-1]['bigReason'])
         self.reset_cap()
-        (self.folder / '.workbench/issue.md').write_text('# Plain offline\n', encoding='utf-8')
+        (self.folder / '.wagflow/issue.md').write_text('# Plain offline\n', encoding='utf-8')
         self.assertEqual(['review: cap'], self.majors([5]))
 
     def test_a_growing_diff_switches_to_the_big_cap_and_stays(self):
         # #75 AC3
         self.assertEqual('stopWhenNoMajor=true minRounds=1 reviewCap=5 failover=true onLimit=failover',
                          self.settings_line().split('autonomous=false ')[1])
-        self.lines = (1500, 'origin/main')                 # at the threshold is not past it
+        self.lines = (1500, 'origin/master')               # at the threshold is not past it
         self.assertEqual(['review: continue'] * 4, self.majors(range(1, 5)))
         self.assertFalse((self.state / 'review-big.json').exists())
-        self.lines = (1623, 'origin/main')
+        self.lines = (1623, 'origin/master')
         self.assertEqual(['review: continue'], self.majors([5]))
-        self.assertEqual('diff 1623 lines > 1500 vs origin/main', self.entries()[-1]['bigReason'])
-        self.lines = (1000, 'origin/main')                 # shrinks: judged big once, stays big
+        self.assertEqual('diff 1623 lines > 1500 vs origin/master', self.entries()[-1]['bigReason'])
+        self.lines = (1000, 'origin/master')               # shrinks: judged big once, stays big
         self.assertEqual(['review: continue'], self.majors([6]))
-        self.assertIn('reviewCap=10 (big: diff 1623 lines > 1500 vs origin/main) failover=true', self.settings_line())
+        self.assertIn('reviewCap=10 (big: diff 1623 lines > 1500 vs origin/master) failover=true', self.settings_line())
         self.configure({'bigDiffLines': 200, 'maxRoundsBig': 12})
         self.assertIn('reviewCap=12 (big: diff 1623', self.settings_line())
 
@@ -2091,7 +2091,7 @@ class ReviewRound(unittest.TestCase):
 
     def test_an_incomplete_report_is_refused_and_nothing_is_recorded(self):
         # AC6: revmux writes the Sources table last, so a crashed run has none.
-        header_only = '# Review: workbench / r1\n\nscope: `x`\n'
+        header_only = '# Review: wagflow / r1\n\nscope: `x`\n'
         no_rows = '# Review\n\n## Minor\n\n### a\n\n## Sources\n\n| agent | status |\n| --- | --- |\n'
         no_sections = '# Review\n\n## Sources\n\n| agent | status |\n| --- | --- |\n| a | ok |\n'
         for text in ('', header_only, no_rows, revmux_report([('Minor', 1)]).split('## Sources')[0], no_sections):
@@ -2411,7 +2411,7 @@ class RevmuxRerun(unittest.TestCase):
             return wb.main()
 
     def test_a_rerun_keeps_the_limited_report_and_uses_a_new_run_name(self):
-        review = self.folder / '.workbench/review'
+        review = self.folder / '.wagflow/review'
         review.mkdir()
         (review / 'revmux-r2.md').write_text('limited', encoding='utf-8')
         (review / 'revmux-r2.json').write_text(json.dumps({'run': 'r2', 'dir': 'x', 'scope': str(self.folder / 'scope.md')}),
@@ -2433,7 +2433,7 @@ class RevmuxRerun(unittest.TestCase):
         self.assertTrue((review / 'revmux-r2-limited-2.md').exists())
 
     def limited_round(self):
-        review = self.folder / '.workbench/review'
+        review = self.folder / '.wagflow/review'
         review.mkdir()
         (review / 'revmux-r2.md').write_text('limited', encoding='utf-8')
         (review / 'revmux-r2.json').write_text(json.dumps({'run': 'r2', 'dir': 'x', 'scope': str(self.folder / 'scope.md')}),
@@ -2443,7 +2443,7 @@ class RevmuxRerun(unittest.TestCase):
     def test_a_session_that_does_not_start_leaves_the_files_as_they_were(self):
         # FIX r1 M1: the limited report is set aside only when the session starts.
         review = self.limited_round()
-        self.opened.side_effect = agw.CtlError('no pipe')
+        self.opened.side_effect = wag.CtlError('no pipe')
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(1, self.revmux('--rerun', '--after', '30'))
         self.assertEqual(['revmux-r2.json', 'revmux-r2.md'], sorted(p.name for p in review.iterdir()))
@@ -2509,21 +2509,29 @@ class ReviewCapSources(unittest.TestCase):
         git(self.folder, 'add', '-A')
         git(self.folder, 'commit', '-q', '-m', message)
 
+    def test_diff_lines_does_not_guess_base_without_origin_head(self):
+        self.commit({'a.txt': 'one\n'}, 'base')
+        for branch in ('main', 'master'):
+            git(self.folder, 'update-ref', f'refs/remotes/origin/{branch}', 'HEAD')
+        self.commit({'a.txt': 'one\ntwo\n'}, 'work')
+        self.assertIsNone(wb.diff_lines(self.folder))
+
     def test_diff_lines_counts_the_branch_against_its_base(self):
         self.commit({'a.txt': 'one\ntwo\nthree\n', 'old.txt': 'x\ny\n'}, 'base')
         self.assertIsNone(wb.diff_lines(self.folder))                  # no origin ref: unmeasurable
-        git(self.folder, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        git(self.folder, 'update-ref', 'refs/remotes/origin/master', 'HEAD')
+        git(self.folder, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master')
         git(self.folder, 'checkout', '-q', '-b', 'issue-75-x')
         self.commit({'a.txt': 'one\nTWO\nthree\nfour\n', 'old.txt': None, 'b.bin': b'\x00\x01\x02' * 50}, 'work')
         # a.txt: 2 added, 1 deleted; old.txt: 2 deleted; the binary counts 0
-        self.assertEqual((5, 'origin/main'), wb.diff_lines(self.folder))
+        self.assertEqual((5, 'origin/master'), wb.diff_lines(self.folder))
         # the default branch moving on (and merged in) does not count: the diff is from the merge-base
         git(self.folder, 'checkout', '-q', 'main')
         self.commit({'main.txt': 'm\n' * 40}, 'main moves')
-        git(self.folder, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        git(self.folder, 'update-ref', 'refs/remotes/origin/master', 'HEAD')
         git(self.folder, 'checkout', '-q', 'issue-75-x')
         git(self.folder, 'merge', '-q', '--no-ff', '-m', 'update', 'main')
-        self.assertEqual((5, 'origin/main'), wb.diff_lines(self.folder))
+        self.assertEqual((5, 'origin/master'), wb.diff_lines(self.folder))
         # origin/HEAD names the base when it is set
         git(self.folder, 'update-ref', 'refs/remotes/origin/trunk', 'main')
         git(self.folder, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
@@ -2532,9 +2540,10 @@ class ReviewCapSources(unittest.TestCase):
     def test_diff_lines_reads_only_the_checkouts_own_git(self):
         # the enclosing repo is measurable, so without --git-dir git would find it and count its diff
         self.commit({'a.txt': 'one\n'}, 'base')
-        git(self.folder, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        git(self.folder, 'update-ref', 'refs/remotes/origin/master', 'HEAD')
+        git(self.folder, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master')
         self.commit({'a.txt': 'one\ntwo\n'}, 'work')
-        self.assertEqual((1, 'origin/main'), wb.diff_lines(self.folder))
+        self.assertEqual((1, 'origin/master'), wb.diff_lines(self.folder))
         inner = self.folder / 'not a checkout'
         inner.mkdir()
         self.assertIsNone(wb.diff_lines(inner))
@@ -2566,7 +2575,7 @@ class Handover(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb handover ' + uuid.uuid4().hex)
-        self.hub = self.folder / '.workbench'
+        self.hub = self.folder / '.wagflow'
         (self.hub / 'state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
@@ -2686,7 +2695,7 @@ class AutoMergeProse(unittest.TestCase):
         self.assertNotIn('1 conflict round', readme)
 
     def test_both_implementers_know_update(self):
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md'):
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md'):
             with self.subTest(path=path):
                 text = ' '.join((Path(__file__).resolve().parent.parent / path).read_text(encoding='utf-8').split())
                 for needle in ['## UPDATE - bring the branch up to date', '`git merge --no-ff <base sha>`',
@@ -2699,7 +2708,7 @@ class AutoMergeProse(unittest.TestCase):
                 self.assertNotIn('even one line beside a conflict', text)          # r2 m2: more than the code checks
 
     def test_implementer_never_merges(self):
-        text = (Path(__file__).resolve().parent.parent / 'claude/commands/workbench-implementer.md').read_text(encoding='utf-8')
+        text = (Path(__file__).resolve().parent.parent / 'claude/commands/wagflow-implementer.md').read_text(encoding='utf-8')
         self.assertIn("is the planner's act, never yours", text)
 
 
@@ -2714,7 +2723,7 @@ class UsageLimitProse(unittest.TestCase):
         text = self.text('claude/commands/start-github-issue.md')
         section = text.split("## Usage limits")[1].split('## Adopted session')[0]
         for needle in ['usage limit: <box> (<tool>) <kind>', 'failover=true', "the agent's own limit message",
-                       'github-workbench.cmd <owner/repo#N> -Failover', 'timeout: 600000', '(exit 3, `Failover incomplete',
+                       'wagflow.cmd <owner/repo#N> -Failover', 'timeout: 600000', '(exit 3, `Failover incomplete',
                        'Exit 2 means nothing was stopped', 'wb.py" handover',
                        'subject `HANDOVER`', 'uncommitted changes are the previous implementer',
                        'refused** (exit 2, ', 'status blocked --sound', '-Implementer <tool>',
@@ -2722,7 +2731,7 @@ class UsageLimitProse(unittest.TestCase):
             self.assertIn(needle, section)
 
     def test_both_implementers_know_handover(self):
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md'):
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md'):
             with self.subTest(path=path):
                 text = self.text(path)
                 self.assertIn('## HANDOVER - you replace another implementer mid-loop', text)
@@ -2780,14 +2789,14 @@ class FollowUps(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb follow ' + uuid.uuid4().hex)
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
         self.addCleanup(hub.reload_paths)
-        config = self.folder / 'agworkbench.json'
+        config = self.folder / 'wagflow.json'
         config.write_text(json.dumps({'followUp': {'dedupe': False}}), encoding='utf-8')
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'),
-                                                 'AGWORKBENCH_CONFIG': str(config)}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'),
+                                                 'WAGFLOW_CONFIG': str(config)}))
         hub.reload_paths()
         self.out, self.err = io.StringIO(), io.StringIO()
         self.enterContext(contextlib.redirect_stdout(self.out))
@@ -2829,7 +2838,7 @@ class FollowUps(unittest.TestCase):
         urls = [i['url'] for i in self.items()]
         self.assertEqual(['https://github.com/o/r/issues/101', 'https://github.com/o/r/issues/102'], urls)
         body = gh.bodies['Fix r2-m1']
-        for needle in ('evidence for r2-m1', 'Source: #27, PR #30', '<!-- agworkbench:follow-up source=#27 -->',
+        for needle in ('evidence for r2-m1', 'Source: #27, PR #30', '<!-- wagflow:follow-up source=#27 -->',
                        wb.PLANNER_MARKER):
             self.assertIn(needle, body)
         creates = [c for c in gh.calls if c[1:3] == ['issue', 'create']]
@@ -2846,7 +2855,7 @@ class FollowUps(unittest.TestCase):
         body = str(self.state / 'follow-up-r2-m1.md')
         self.assertEqual([['gh', 'issue', 'view', '27', '--json', 'title,labels', '--repo', 'fork/r'],
                           ['gh', 'label', 'create', 'follow-up', '--color', 'BFD4F2',
-                           '--description', 'filed automatically by an agworkbench loop', '--repo', 'fork/r'],
+                           '--description', 'filed automatically by a WagFlow loop', '--repo', 'fork/r'],
                           ['gh', 'issue', 'list', '--state', 'open', '--search', '"Fix the relay" in:title',
                            '--json', 'title,url', '--limit', '200', '--repo', 'fork/r'],
                           ['gh', 'issue', 'create', '--title', 'Fix the relay', '--body-file', body, '--label', 'follow-up',
@@ -2854,7 +2863,7 @@ class FollowUps(unittest.TestCase):
                          gh.calls)
         self.assertEqual('https://github.com/fork/r/issues/101', self.items()[0]['url'])
         self.assertEqual('evidence for r2-m1: lib/x.py:12 fails\n\nSource: #27\nSeverity: minor; origin: review r2\n\n'
-                         '<!-- agworkbench:follow-up source=#27 -->\n<!-- agworkbench:planner -->\n',
+                         '<!-- wagflow:follow-up source=#27 -->\n<!-- wagflow:planner -->\n',
                          gh.bodies['Fix the relay'])
 
     def test_dedupe_off_with_pr_creates_one_leftovers_issue(self):
@@ -2866,12 +2875,12 @@ class FollowUps(unittest.TestCase):
         # no `gh repo view`, which there answers with the parent.
         self.assertEqual([['gh', 'issue', 'view', '27', '--json', 'title,labels', '--repo', 'fork/r'],
                           ['gh', 'label', 'create', 'follow-up', '--color', 'BFD4F2',
-                           '--description', 'filed automatically by an agworkbench loop', '--repo', 'fork/r'],
+                           '--description', 'filed automatically by a WagFlow loop', '--repo', 'fork/r'],
                           ['gh', 'issue', 'list', '--state', 'open', '--search',
                            '"Leftovers from #27: Source issue" in:title', '--json', 'number,title', '--limit', '200',
                            '--repo', 'fork/r'],
                           ['gh', 'label', 'create', 'priority:P2', '--color', 'D93F0B',
-                           '--description', 'agworkbench priority (#34, #42)', '--repo', 'fork/r'],
+                           '--description', 'wagflow priority (#34, #42)', '--repo', 'fork/r'],
                           ['gh', 'issue', 'create', '--title', 'Leftovers from #27: Source issue',
                            '--body-file', str(self.state / 'follow-up-leftovers.md'),
                            '--label', 'follow-up', '--label', 'priority:P2', '--repo', 'fork/r']], gh.calls)
@@ -3048,17 +3057,17 @@ class PlanCheck(unittest.TestCase):
 
     def setUp(self):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb plan ' + uuid.uuid4().hex)
-        (self.folder / '.workbench/state').mkdir(parents=True)
+        (self.folder / '.wagflow/state').mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.folder)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench')}))
-        (self.folder / '.workbench/state/implementer.json').write_text('{"tool": "kimi"}', encoding='utf-8')
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow')}))
+        (self.folder / '.wagflow/state/implementer.json').write_text('{"tool": "kimi"}', encoding='utf-8')
         # KIMI_PLAN's oracle: with the checkout known, an oracle path must exist there (FIX r3 m3).
         for name in ('tests/fixtures/macro-sheet.xlsm', 'crates/xlsx/tests/roundtrip.rs'):
             (self.folder / name).parent.mkdir(parents=True, exist_ok=True)
             (self.folder / name).write_text('x', encoding='utf-8')
 
     def check(self, plan, *extra):
-        (self.folder / '.workbench/plan.md').write_text(plan, encoding='utf-8')
+        (self.folder / '.wagflow/plan.md').write_text(plan, encoding='utf-8')
         out = io.StringIO()
         with contextlib.redirect_stdout(out), patch.object(sys, 'argv', ['wb.py', 'plan-check', *extra]):
             code = wb.main()
@@ -3165,9 +3174,9 @@ class PlanCheck(unittest.TestCase):
         self.assertIn('Done means does not ask for skipped tests by name', out)
 
     def test_not_required_for_other_implementers_and_another_path(self):
-        (self.folder / '.workbench/state/implementer.json').write_text('{"tool": "codex"}', encoding='utf-8')
+        (self.folder / '.wagflow/state/implementer.json').write_text('{"tool": "codex"}', encoding='utf-8')
         self.assertEqual((0, 'plan-check: not required (implementer=codex)\n'), self.check('# nothing'))
-        (self.folder / '.workbench/state/implementer.json').write_text('{"tool": "kimi"}', encoding='utf-8')
+        (self.folder / '.wagflow/state/implementer.json').write_text('{"tool": "kimi"}', encoding='utf-8')
         (self.folder / 'other.md').write_text(KIMI_PLAN, encoding='utf-8')
         self.assertEqual(0, self.check('# nothing', '--plan', 'other.md')[0])
 
@@ -3222,7 +3231,7 @@ class KimiPlanProse(unittest.TestCase):
     def test_the_readme_describes_the_slow_queue(self):
         text = self.text('README.md')
         section = text.split('### A slow queue that waits out usage limits')[1].split('### ')[0]
-        for needle in ["github-workbench -Queue 'where: kimi AND priority IN [P2, P3]' -Repo yeroo/docxy -QueueName kimi "
+        for needle in ["wagflow -Queue 'where: kimi AND priority IN [P2, P3]' -Repo yeroo/docxy -QueueName kimi "
                        "-Workspace docxy-kimi -Implementer kimi -WaitOnLimit -Autonomous -Watch",
                        '`limitRetryMinutes`', '`"reviewOnLimit": "fallback"`', '`waiting-limit (active)`',
                        '`kimi` label', 'wb.py plan-check']:
@@ -3254,7 +3263,7 @@ class ReviewRoundProse(unittest.TestCase):
         for needle in ['wb.py review-round --summary', 'leave it out when it exits 2',
                        "**A stop's deferred minors are filed now**, with or without auto-merge",
                        'wb.py" follow-up file --source <N> --pr <P>`, run `review-round --summary` again',
-                       'gh pr edit <P> --repo <owner/repo> --body-file .workbench/pr-body.md']:
+                       'gh pr edit <P> --repo <owner/repo> --body-file .wagflow/pr-body.md']:
             self.assertIn(needle, phase5)
         self.assertLess(phase5.index('gh pr create'), phase5.index('gh pr edit <P>'))
         self.assertNotIn('filed at merge', text)
@@ -3280,7 +3289,7 @@ class ReviewRoundProse(unittest.TestCase):
         self.assertIn('as "Follow-ups" below says', text.split('## Full autonomy')[1].split('## Follow-ups')[0])
 
     def test_both_implementers_know_the_final_round(self):
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md'):
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md'):
             with self.subTest(path=path):
                 text = self.text(path)
                 self.assertIn('A `FIX r<K> (final)` round has no revmux round after it', text)
@@ -3292,7 +3301,7 @@ class LoopEndProse(unittest.TestCase):
 
     def test_both_implementers_stop_without_replying(self):
         root = Path(__file__).resolve().parent.parent
-        for path in ('claude/commands/workbench-implementer.md', 'codex/skills/workbench-implementer/SKILL.md'):
+        for path in ('claude/commands/wagflow-implementer.md', 'codex/skills/wagflow-implementer/SKILL.md'):
             with self.subTest(path=path):
                 text = ' '.join((root / path).read_text(encoding='utf-8').split())
                 self.assertIn('When mail says the loop is complete, or the relay reports the PR MERGED or CLOSED', text)
@@ -3343,15 +3352,15 @@ class ForkGh:
 
 
 class ForkCheckout(unittest.TestCase):
-    """#71: in a fork's checkout gh resolves its base repository to the parent. Every workbench gh call
+    """#71: in a fork's checkout gh resolves its base repository to the parent. Every wagflow gh call
     names the checkout's own repo, and a write to another repo is refused before gh runs."""
 
     def setUp(self):
         self.folder = scratch(self, 'wb-fork-')
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.addCleanup(hub.reload_paths)
-        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.workbench'), 'AI_BOX': 'claude'}))
+        self.enterContext(patch.dict(os.environ, {'AI_HUB': str(self.folder / '.wagflow'), 'AI_BOX': 'claude'}))
         hub.reload_paths()
         (self.state / 'relay.json').write_text(json.dumps({'seen_open': [7]}), encoding='utf-8')
         self.out, self.err = io.StringIO(), io.StringIO()
@@ -3367,7 +3376,7 @@ class ForkCheckout(unittest.TestCase):
 
     # --- the scoping rule --------------------------------------------------------------------------
 
-    def test_a_call_without_a_repo_names_the_workbench_repo(self):
+    def test_a_call_without_a_repo_names_the_wagflow_repo(self):
         self.assertEqual(['issue', 'view', '5', '--json', 'title', '--repo', 'fork/r'],
                          wb.scoped(['issue', 'view', '5', '--json', 'title'], 'fork/r'))
         for verb in (['pr', 'checks', '7'], ['label', 'create', 'x'], ['run', 'rerun', '11', '--failed']):
@@ -3446,7 +3455,7 @@ class ForkCheckout(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(args, wb.scoped(args, 'fork/r'))
 
-    def test_api_placeholders_are_the_workbench_repo(self):
+    def test_api_placeholders_are_the_wagflow_repo(self):
         # gh fills {owner}/{repo} from its own base resolution - the parent in a fork's checkout.
         self.assertEqual(['api', 'repos/fork/r/issues', '-F', 'owner=fork', '-f', 'body={repo}'],
                          wb.scoped(['api', 'repos/{owner}/{repo}/issues', '-F', 'owner={owner}', '-f', 'body={repo}'],
@@ -3457,14 +3466,14 @@ class ForkCheckout(unittest.TestCase):
         with patch.object(wb.subprocess, 'run', side_effect=gh):
             done = wb.gh_run(self.folder, 'issue', 'create', '--title', 't', '--repo', 'up/r')
         self.assertEqual(1, done.returncode)
-        self.assertIn("targets up/r, not this workbench's repo fork/r", done.stderr)
+        self.assertIn("targets up/r, not this WagFlow's repo fork/r", done.stderr)
         self.assertIn('wb: refused: gh issue create targets up/r', self.err.getvalue())
         self.assertEqual([], gh.calls)
         with patch.object(wb.subprocess, 'run', side_effect=gh), self.assertRaises(wb.ForeignRepo):
             wb.gh_json('api', '-X', 'PATCH', 'repos/up/r/issues/1', cwd=self.folder)
         self.assertEqual([], gh.calls)
 
-    # --- the workbench repo ------------------------------------------------------------------------
+    # --- the WagFlow repo ------------------------------------------------------------------------
 
     def test_the_repo_is_the_checkouts_origin_with_its_case(self):
         for url in ('https://github.com/Fork/Re.po.git', 'https://x-token@github.com/Fork/Re.po', 'git@github.com:Fork/Re.po.git',
@@ -3473,14 +3482,14 @@ class ForkCheckout(unittest.TestCase):
                 folder = scratch(self, 'wb-origin-')
                 make_origin(folder)
                 subprocess.run(['git', '-C', str(folder), 'remote', 'set-url', 'origin', url], check=True)
-                self.assertEqual('Fork/Re.po', wb.workbench_repo(folder))
+                self.assertEqual('Fork/Re.po', wb.wagflow_repo(folder))
 
     def test_no_github_origin_is_exit_2_not_a_guess(self):
         folder = scratch(self, 'wb-origin-')
         make_origin(folder)
         subprocess.run(['git', '-C', str(folder), 'remote', 'set-url', 'origin', 'https://gitlab.com/o/r.git'], check=True)
         with self.assertRaises(SystemExit) as caught:
-            wb.workbench_repo(folder)
+            wb.wagflow_repo(folder)
         self.assertEqual(2, caught.exception.code)
         self.assertIn('has no GitHub origin', self.err.getvalue())
         # A folder inside another clone is not a checkout: git must not walk up to that clone's origin.
@@ -3488,7 +3497,7 @@ class ForkCheckout(unittest.TestCase):
         inside.mkdir()
         self.addCleanup(shutil.rmtree, inside)
         with self.assertRaises(SystemExit) as caught:
-            wb.workbench_repo(inside)
+            wb.wagflow_repo(inside)
         self.assertEqual(2, caught.exception.code)
 
     # --- the commands (AC3) ------------------------------------------------------------------------
@@ -3520,7 +3529,7 @@ class ForkCheckout(unittest.TestCase):
     def test_merge_check_refuses_a_pr_of_another_repo(self):
         gh = ForkGh(pr_repo='up/r')
         self.assertEqual(1, self.run_wb('merge-check', '--pr', 'https://github.com/up/r/pull/7', '--head', HEAD, gh=gh))
-        self.assertEqual("repo: PR https://github.com/up/r/pull/7 is in up/r, not this workbench's repo fork/r",
+        self.assertEqual("repo: PR https://github.com/up/r/pull/7 is in up/r, not this WagFlow's repo fork/r",
                          self.out.getvalue().strip())
         self.assertEqual([['pr', 'view']], [c[1:3] for c in gh.calls])       # nothing more is read of it
 
@@ -3534,13 +3543,13 @@ class WaitLimit(unittest.TestCase):
         self.folder = Path(__file__).resolve().parent.parent / ('test wb wait-limit ' + uuid.uuid4().hex)
         self.folder.mkdir()
         self.addCleanup(shutil.rmtree, self.folder)
-        self.state = self.folder / '.workbench/state'
+        self.state = self.folder / '.wagflow/state'
         self.state.mkdir(parents=True)
         self.loop = str(uuid.uuid4())
         self.q.atomic_json(self.state / 'queue-member.json', dict(queue=str(self.folder / 'queue.json'), repo='o/r', number=1))
         self.q.atomic_json(self.state / 'claude.json', dict(sessionId=self.loop))
-        self.enterContext(patch.dict(os.environ, AI_HUB=str(self.folder / '.workbench'), CLAUDE_CODE_SESSION_ID=self.loop))
-        self.enterContext(patch.object(agw, 'request', side_effect=AssertionError('terminal access')))
+        self.enterContext(patch.dict(os.environ, AI_HUB=str(self.folder / '.wagflow'), CLAUDE_CODE_SESSION_ID=self.loop))
+        self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('terminal access')))
         self.err = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.out = self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 

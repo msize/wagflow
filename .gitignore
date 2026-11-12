@@ -1,5 +1,5 @@
 __pycache__/
 *.pyc
-.workbench/
+.wagflow/
 .revmux/
-/github-workbench.ps1
+/wagflow.ps1

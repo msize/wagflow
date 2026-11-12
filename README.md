@@ -1,18 +1,23 @@
-# agworkbench
+# WagFlow
 
 **Two agents, one GitHub issue, one terminal window.** Claude Code on the left, Codex on the right.
 They agree a plan, Codex implements, Claude reviews, Codex fixes — and it stops when *you* merge
 the pull request.
 
 ```
-github-workbench yeroo/agworkbench#7
+wagflow msize/wagflow#7
 ```
 
-This is a Windows reproduction of the two-pane workflow umputun runs on macOS with
-[agterm](https://github.com/umputun/agterm) — his cookbook recipe
-[`two-agent-chat`](https://github.com/umputun/agterm/tree/master/cookbook/two-agent-chat) — built on
-[agwinterm](https://github.com/yeroo/agwinterm) and extended into a full issue-to-merge loop with his
-review tools [revmux](https://github.com/umputun/revmux) and [revdiff](https://github.com/umputun/revdiff).
+WagFlow is a fork of [agworkbench](https://github.com/yeroo/agworkbench), built for
+[WagTerm](https://github.com/msize/wagterm). It follows the two-pane workflow umputun runs on macOS with
+[agterm](https://github.com/umputun/agterm), from his cookbook recipe
+[`two-agent-chat`](https://github.com/umputun/agterm/tree/master/cookbook/two-agent-chat), extended into
+a full issue-to-merge loop with his review tools [revmux](https://github.com/umputun/revmux) and
+[revdiff](https://github.com/umputun/revdiff).
+
+The display name is **WagFlow**. Commands, paths and markers use `wagflow`, and environment variables
+use `WAGFLOW` or `WAGFLOW_*`. WagFlow uses its own `~/.wagflow.json`, `~/.wagflow/` and per-checkout
+`.wagflow/`. It does not import or modify the upstream project's configuration or saved sessions.
 
 ## Why two agents
 
@@ -24,18 +29,21 @@ defects, and each can refute the other's finding before it reaches you.
 ## Install
 
 ```powershell
-git clone https://github.com/yeroo/agworkbench
-cd agworkbench
+git clone https://github.com/msize/wagflow
+cd wagflow
 .\install.ps1            # asks before installing anything
 ```
 
-It installs what is missing — git, gh, python, node, go (via scoop); agwinterm (via scoop, from
-[yeroo/scoop-bucket](https://github.com/yeroo/scoop-bucket)) with its agent skill and status hooks;
-Claude Code; the Codex CLI; revmux and revdiff (via `go install`, as neither ships a Windows binary)
-— then the `/start-github-issue` command for Claude, the `workbench-implementer` skill for Codex,
-and `github-workbench` on your PATH.
+Install [WagTerm](https://github.com/msize/wagterm/releases) first. Its upstream terminal's Scoop
+package does not install WagTerm. The installer locates `wagtermctl` on PATH or in its per-user
+installation. For a custom location, set `WAGTERMCTL` to the CLI's full path and put `wagterm` on PATH.
 
-`.\install.ps1 -Bypass` starts Claude with `--dangerously-skip-permissions` in workbench sessions.
+It installs what is missing — git, gh, python, node, go (via scoop); Claude Code; the Codex CLI;
+revmux and revdiff (via `go install`, as neither ships a Windows binary)
+— then the `/wagflow-start` command for Claude, the `wagflow-implementer` skill for Codex,
+and `wagflow` on your PATH. It also installs WagTerm's agent skill and status hooks.
+
+`.\install.ps1 -Bypass` starts Claude with `--dangerously-skip-permissions` in WagFlow sessions.
 Without it, Claude stops to ask before every shell command and the loop stops with it. Codex is
 sandboxed either way (below).
 
@@ -44,30 +52,29 @@ sandboxed either way (below).
 From PowerShell or cmd, anywhere:
 
 ```
-github-workbench 42                                         # issue 42 of the repo you are in
-github-workbench owner/repo#42
-github-workbench https://github.com/owner/repo/issues/42
-github-workbench owner/repo#42 -DryRun                      # show the plan, touch nothing
-github-workbench owner/repo#42 -NewSession                  # separate session, or resume its existing workbench
-github-workbench -Version                                  # installed toolchain, one line per tool
+wagflow 42                                         # issue 42 of the repo you are in
+wagflow owner/repo#42
+wagflow https://github.com/owner/repo/issues/42
+wagflow owner/repo#42 -DryRun                      # show the plan, touch nothing
+wagflow owner/repo#42 -NewSession                  # separate session, or resume its existing WagFlow
+wagflow -Version                                  # installed toolchain, one line per tool
 ```
 
-Inside agwinterm (or agliteterm), the launcher adopts its current session: it keeps the caller as
+Inside WagTerm, the launcher adopts its current session: it keeps the caller as
 Claude, splits in Codex, renames the session, and moves it to the repository's workspace. An
 already-running Claude's composer is untouched; the launcher prints a context command so that
 Claude continues the issue in its clone with the correct mailbox. From a plain shell, Claude
 starts there after setup. A foreign split, another issue's session, or a conflicting existing
-workbench is refused before setup changes anything. Rerun from the same Claude pane to complete
+WagFlow is refused before setup changes anything. Rerun from the same Claude pane to complete
 a partial adoption. `-NewSession` uses the separate-session/resume behavior. From any other
-terminal, the launcher starts agwinterm — installing it with scoop first if needed — and opens
-the session there.
+terminal, the launcher starts the installed WagTerm and opens the session there.
 
 In PowerShell, a bare `#42` is a comment. Type `42`, or quote it.
 
 ## What happens
 
 Each launch appends timestamped steps, terminal commands, and failures to
-`<checkout>/.workbench/state/launch.log`. If setup fails, the launcher prints the known session
+`<checkout>/.wagflow/state/launch.log`. If setup fails, the launcher prints the known session
 and pane IDs, commands that can be run by hand, and the command to resume. Failures before the
 checkout exists print the buffered log in the launching shell.
 
@@ -83,27 +90,27 @@ repository names. Ambiguous matches are reported with their session IDs rather t
 
 The launcher pins restart commands for Claude, Codex and the relay. Pinned commands always replay
 on restart. A failed pin stops setup with repair instructions.
-Review helpers are not pinned. Restarting agwinterm with its session tree intact replays these
+Review helpers are not pinned. Restarting WagTerm with its session tree intact replays these
 commands; running the launcher again refreshes the pins and leaves non-shell panes untouched.
 
-To work through several issues without waiting between them, run inside agwinterm:
+To work through several issues without waiting between them, run inside WagTerm:
 
 ```powershell
-github-workbench -Queue 'owner/repo#3,#4,#5'
-github-workbench -Queue '3,4,5' -Repo owner/repo -Parallel 2
-github-workbench -Queue 'label:workbench' -Repo owner/repo -Watch
-github-workbench -Queue 'owner/repo#3,#4,#5' -Retry
-github-workbench -Queue bugs -Repo yeroo/docxy -Autonomous
+wagflow -Queue 'owner/repo#3,#4,#5'
+wagflow -Queue '3,4,5' -Repo owner/repo -Parallel 2
+wagflow -Queue 'label:wagflow' -Repo owner/repo -Watch
+wagflow -Queue 'owner/repo#3,#4,#5' -Retry
+wagflow -Queue bugs -Repo yeroo/docxy -Autonomous
 ```
 
-**`-Queue bugs`** is `label:<bugLabel>`, with `bugLabel` in `~/.agworkbench.json`, default `bug`.
+**`-Queue bugs`** is `label:<bugLabel>`, with `bugLabel` in `~/.wagflow.json`, default `bug`.
 
 **`-Queue 'where: <query>'`** selects open issues with a boolean label query (#38):
 
 ```powershell
-github-workbench -Queue 'where: bug AND priority IN [P0, P1] AND NOT wontfix' -Repo yeroo/docxy -Autonomous -Triage
-github-workbench -Queue 'where: (bug OR follow-up) AND priority NOT IN [P2, P3]' -Repo yeroo/docxy
-github-workbench -Queue "where: label IN [bug, regression] AND NOT 'needs design'" -Repo yeroo/docxy
+wagflow -Queue 'where: bug AND priority IN [P0, P1] AND NOT wontfix' -Repo yeroo/docxy -Autonomous -Triage
+wagflow -Queue 'where: (bug OR follow-up) AND priority NOT IN [P2, P3]' -Repo yeroo/docxy
+wagflow -Queue "where: label IN [bug, regression] AND NOT 'needs design'" -Repo yeroo/docxy
 ```
 
 - **Operators:** `NOT` binds tighter than `AND`, which binds tighter than `OR`. Parentheses
@@ -130,10 +137,10 @@ github-workbench -Queue "where: label IN [bug, regression] AND NOT 'needs design
   another state stay in the queue. `-DryRun` shows the settings change and the members that would
   be pruned without writing the queue file. `-Prune` requires `-Watch` and a label or query spec.
 - **Quotes and your shell:** a `.cmd` (and Windows PowerShell 5.1 calling any program) splits an
-  argument at its inner double quotes. So `install.ps1` puts `github-workbench.ps1` next to
-  `github-workbench.cmd` and PowerShell (pwsh and 5.1) runs it instead: it hands your arguments over
+  argument at its inner double quotes. So `install.ps1` puts `wagflow.ps1` next to
+  `wagflow.cmd` and PowerShell (pwsh and 5.1) runs it instead: it hands your arguments over
   intact, as JSON through the environment. Double-quoted labels inside a query then arrive exactly.
-  From **cmd.exe or Git Bash**, `github-workbench` is the `.cmd`: quote labels inside a query with
+  From **cmd.exe or Git Bash**, `wagflow` is the `.cmd`: quote labels inside a query with
   **single quotes** there (`-Queue "where: bug AND NOT 'needs design'"`). The same applies in
   PowerShell when its execution policy does not allow local scripts (`Restricted`, `AllSigned`);
   the installer then leaves the `.ps1` out and says so.
@@ -142,7 +149,7 @@ A label spec (`bugs`, `label:X`) or a `where:` query queues only issues nobody i
 out is printed as `#N skipped: <reason>`:
 - `pr`: an open pull request will close it, or an open PR is on its `issue-<N>-*` branch in this
   repo;
-- `session`: a workbench session `#N ...` is open for it in the repo's workspace or a workspace of
+- `session`: a WagFlow session `#N ...` is open for it in the repo's workspace or a workspace of
   one of the repo's queues;
 - `checkout-lock`: a launcher currently holds its checkout;
 - `checkout`: its checkout exists from an earlier loop outside this queue (resume or delete it);
@@ -163,7 +170,7 @@ A visible, restart-pinned `#queue owner/repo` conductor starts one issue at a ti
 (`-Parallel 1..8`). Each issue has its own clone, Claude, Codex, and review relay. A PR-open, blocked,
 or no-PR closed report releases the initial-work slot immediately. Human-directed fixes on an earlier issue can continue
 alongside later issues. Agents never merge or approve PRs. Queue launches preserve focus, and Claude
-does not open revdiff automatically; run `wb.py human-review --base origin/main` in the issue's
+does not open revdiff automatically; run `wb.py human-review --base origin/master` in the issue's
 context to open it on demand, or review on GitHub.
 
 Every line the `#queue` conductor, the `#triage` watch and each relay print in their panes starts with
@@ -173,18 +180,18 @@ date changes (#78). JSON output (`-DryRun`, member context) and log files are no
 Rerunning appends new issues without duplicates. Saved parallelism is preserved unless explicitly
 changed. A watched spec (a label or a query) is checked every five minutes; empty or temporarily failing scans keep
 waiting. Without `-Watch`, the conductor exits after admission work finishes and writes a summary
-snapshot beside `~/.agworkbench/queues/<owner>/<repo>.json`. Per-issue review continues; rerun the
+snapshot beside `~/.wagflow/queues/<owner>/<repo>.json`. Per-issue review continues; rerun the
 queue to refresh its PR states. There is one watched spec per queue. `-DryRun` resolves and shows
 the proposed members without starting anything. `-Retry` repairs failed/incomplete launches using
 their saved checkout and conversation; ordinary reruns leave failures for the human to inspect.
 Queue state corruption is reported without resetting it. Restore a moved/deleted established
 checkout before retrying. The configuration file selected when the queue was created is retained,
-including `AGWORKBENCH_CONFIG` overrides.
+including `WAGFLOW_CONFIG` overrides.
 
-Members publish local `.workbench/state/loop.json` reports through `wb.py loop-state` instead of
+Members publish local `.wagflow/state/loop.json` reports through `wb.py loop-state` instead of
 mailing a conductor agent. The conductor reads those reports; each issue's mailbox and one Claude
 background waiter continue to handle human review independently. Queue mode does not attach to
-an existing non-queue workbench loop. Internal `-QueueMember`, `-QueueAttempt`, and `-QueueToken`
+an existing non-queue WagFlow loop. Internal `-QueueMember`, `-QueueAttempt`, and `-QueueToken`
 arguments are supplied by the conductor, not ordinary launch commands.
 When a closed issue needs no change, `wb.py loop-state done --no-pr --reason "<why>"` records it as
 `closed`, releases its queue slot, and counts it separately from `merged` in the summary.
@@ -200,11 +207,11 @@ the action is recorded in the queue and its `operator.log`.
 P0/P1 with Claude and an evaluation queue for P2 with Kimi whose PRs wait for review:
 
 ```powershell
-github-workbench -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName kimi -Implementer kimi -NoAutoMerge -Watch
+wagflow -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName kimi -Implementer kimi -NoAutoMerge -Watch
 ```
 
-- **Its own everything:** the queue file is `~/.agworkbench/queues/yeroo/docxy.kimi.json`; its
-  conductor is `#queue yeroo/docxy (kimi)`; its members, relays and helpers open in the agwinterm
+- **Its own everything:** the queue file is `~/.wagflow/queues/yeroo/docxy.kimi.json`; its
+  conductor is `#queue yeroo/docxy (kimi)`; its members, relays and helpers open in the WagTerm
   workspace `docxy-kimi` (or `-Workspace <name>`, fixed at the first start); its checkouts are
   `docxy-kimi-issue-N`. Implementer, revmux profile, autonomy, auto-merge and parallel are its own.
   Without `-QueueName` it is the main queue (`docxy.json`, the `docxy` workspace), as before. A
@@ -219,7 +226,7 @@ github-workbench -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName k
   counting as "no claim". The in-hand skips also look in every queue's workspace and in the plain
   `docxy-issue-N` checkout.
 - **No triage in named queues:** `-Triage` with `-QueueName` is refused. Triage stays the one
-  repo-wide `github-workbench -Triage -Repo yeroo/docxy -Watch`, and named queues read the priority
+  repo-wide `wagflow -Triage -Repo yeroo/docxy -Watch`, and named queues read the priority
   labels it sets.
 - **Review profile:** `-RevmuxProfile <name>` saves a profile on the queue and passes it to every
   member the conductor launches. It holds for conductor launches only: a single-issue launch (a
@@ -227,9 +234,9 @@ github-workbench -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName k
   routes to another tool because of a usage limit gets that tool's default too. The default for
   Kimi is `kimi-mixed` when the installed revmux lists it (`revmux config`), else `claude-only` with
   a warning.
-- **Single-issue launches of a named member:** `github-workbench <owner/repo>#N` (with `-Failover`,
+- **Single-issue launches of a named member:** `wagflow <owner/repo>#N` (with `-Failover`,
   `-Implementer`, ...) run from inside a named queue's checkout uses that checkout and its
-  workspace, proven by its `.workbench/state/queue-member.json`. From elsewhere it does the same
+  workspace, proven by its `.wagflow/state/queue-member.json`. From elsewhere it does the same
   when `<repo>-issue-N` has no clone and exactly one `<repo>-<queue>-issue-N` has such a membership;
   two are refused, naming them. Otherwise it is the plain `<repo>-issue-N` launch. Relaunching a
   named member through its conductor is `-Queue <spec> -QueueName <name> -Retry`.
@@ -239,13 +246,13 @@ github-workbench -Queue 'where: priority IN [P2]' -Repo yeroo/docxy -QueueName k
   their queue membership records.
 
 Claude's conversation ID, original project directory and pane binding live in
-`.workbench/state/claude.json`. The launcher reserves the ID before starting Claude, so an
+`.wagflow/state/claude.json`. The launcher reserves the ID before starting Claude, so an
 interrupted first launch can retry with the same ID. The pane script resumes that exact
 conversation when its transcript exists, or starts the reserved conversation otherwise. A
 replacement Claude pane gets a new reservation and the old record is archived. When adopting a
 running Claude, its `CLAUDE_CODE_SESSION_ID` and transcript must be available; a missing identity
 is refused before adoption. `claudeArgs` cannot override conversation identity or launch mode.
-For older workbenches without a saved identity, the launcher recovers the newest unambiguous CLI
+For older wagflowes without a saved identity, the launcher recovers the newest unambiguous CLI
 transcript for the checkout. If it cannot identify a running Claude conversation, it leaves that
 pane unpinned and prints a manual repair command. A per-checkout lock prevents overlapping launches
 from reserving different identities for the same pane.
@@ -256,17 +263,17 @@ same sandbox, approval and environment policy. If no matching rollout exists, it
 Resumed Codex continues interrupted implementation or fixes; otherwise it checks mail and waits.
 Resumed Claude starts its background mail waiter and continues its interrupted phase.
 Both pane scripts support `-WhatIfOnly` to inspect the command without starting an agent or
-changing the workbench state. Claude transcripts use `CLAUDE_CONFIG_DIR` when set (otherwise
+changing the WagFlow state. Claude transcripts use `CLAUDE_CONFIG_DIR` when set (otherwise
 `~/.claude`); Codex rollouts use `CODEX_HOME` when set (otherwise `~/.codex`).
 
 ```
- github-workbench owner/repo#42
-   ├─ full clone ~/source/workbench/repo-issue-42, branch issue-42-<slug>
+ wagflow owner/repo#42
+   ├─ full clone ~/source/wagflow/repo-issue-42, branch issue-42-<slug>
    ├─ session "#42 <slug>":   [ Claude  |  Codex ]
    └─ session "#42 relay":    rings panes on mail; watches the PR
 
- Claude  /start-github-issue owner/repo#42
-   1 intake      reads the issue, writes .workbench/issue.md for Codex
+  Claude  /wagflow-start owner/repo#42
+   1 intake      reads the issue, writes .wagflow/issue.md for Codex
    2 plan        drafts plan.md  ⇄  Codex critiques  … until "AGREED: plan vK"
    3 implement   Codex, on the issue branch; commits; runs the tests
    4 review      revmux round in its own session → Claude verifies findings
@@ -277,7 +284,7 @@ changing the workbench state. Claude transcripts use `CLAUDE_CONFIG_DIR` when se
    7 merged      you merge; the relay sees it; both agents stop
 ```
 
-The relay types a one-line `Chat from Workbench:` pointer into the recipient's pane when mail
+The relay types a one-line `Chat from WagFlow:` pointer into the recipient's pane when mail
 arrives. Claude also keeps one `wb.py wait-mail` command running through its background execution;
 the command checks its unread inbox immediately and then waits, waking Claude on mail or timeout.
 Reports from revmux and your revdiff annotations arrive through the same mailbox. You never need
@@ -293,14 +300,14 @@ plus `ux` when UI/UX is the reason. It judges each issue against the product's p
 repos. The labels must already exist on the repo.
 
 ```powershell
-github-workbench -Triage -Repo yeroo/docxy              # every open issue without a priority: label
-github-workbench -Triage -Repo yeroo/docxy -Watch       # keep doing it for new ones, every 5 minutes
-github-workbench -Retriage -Repo yeroo/docxy -DryRun    # re-judge labelled ones too; print, write nothing
-github-workbench -Triage -Retriage -FollowUps -Repo yeroo/docxy -Limit 200
-github-workbench -Queue bugs -Repo yeroo/docxy -Autonomous -Triage
+wagflow -Triage -Repo yeroo/docxy              # every open issue without a priority: label
+wagflow -Triage -Repo yeroo/docxy -Watch       # keep doing it for new ones, every 5 minutes
+wagflow -Retriage -Repo yeroo/docxy -DryRun    # re-judge labelled ones too; print, write nothing
+wagflow -Triage -Retriage -FollowUps -Repo yeroo/docxy -Limit 200
+wagflow -Queue bugs -Repo yeroo/docxy -Autonomous -Triage
 ```
 
-Configure it locally in `~/.agworkbench.json`, never in the repo:
+Configure it locally in `~/.wagflow.json`, never in the repo:
 
 ```json
 "triage": {"yeroo/docxy": {"specRepos": ["yeroo/docxy-project-spec", "yeroo/docxy-word-spec",
@@ -317,7 +324,7 @@ Configure it locally in `~/.agworkbench.json`, never in the repo:
 
 **How it decides (`lib/triage.py`):**
 1. **The facts, without a model.** triage.py reads every configured spec repo that exists: its
-   open issues and a shallow cached clone (`~/.agworkbench/spec-cache`). A repo that does not exist
+   open issues and a shallow cached clone (`~/.wagflow/spec-cache`). A repo that does not exist
    is skipped with a note, so `docxy-excel-spec` joins once it exists. GitHub answers a private
    repo your gh account cannot see exactly like a missing one, so if **none** of the configured
    spec repos can be read, the run stops (check `gh auth status`). Any other failure (network,
@@ -332,7 +339,7 @@ Configure it locally in `~/.agworkbench.json`, never in the repo:
    referenced issue gets a P1 floor. Minor follow-ups on the deterministic P0 path still ask the
    model whether an exception applies.
 3. **The model,** everywhere else. It runs as `claude -p` with the text of
-   `claude/commands/triage-issue.md` (also installed as `/triage-issue`). It runs `--restricted`,
+    `claude/commands/triage-issue.md` (installed as `/wagflow-triage`). It runs `--restricted`,
    with only Read, Grep and Glob, no MCP servers, no settings but the quiet file, and a JSON schema
    for its answer, within 300 s. triage.py enforces the rules, whatever the answer says:
    - the floor is never lowered except when the follow-up cap applies;
@@ -404,32 +411,32 @@ sorted, and its active ones are left alone.
 **Codex** runs `--sandbox workspace-write --ask-for-approval never`, rooted at the issue's own
 clone. Network access and writes outside the clone are blocked, and the two settings that tune the
 sandbox are pinned on the command line so a config file cannot loosen them. `"allowNetwork": true`
-in `~/.agworkbench.json` is the one way to open the network. Nothing in `codexArgs` may re-decide
+in `~/.wagflow.json` is the one way to open the network. Nothing in `codexArgs` may re-decide
 the policy — not by flag, config key, profile, or alias; the test suite pins every spelling.
 
 Because its sandbox denies the terminal's control pipe, Codex cannot type into any pane — and
 doesn't need to: it writes mail files inside its clone, and the relay rings Claude.
 
 **Forks (#71).** In a clone of a fork, `gh` without `--repo` resolves to the fork's *parent*: a
-leftovers issue once landed on the upstream repo that way. Every `gh` call the workbench makes names
+leftovers issue once landed on the upstream repo that way. Every `gh` call the WagFlow makes names
 the checkout's own repo, read from its `origin` remote (never `gh repo view`), and `wb.py` refuses,
 before `gh` runs, any write aimed at another repo (`refused: gh issue create targets up/r, not this
-workbench's repo fork/r`). merge-check fails a PR of another repo with a `repo:` line. The launcher
+WagFlow's repo fork/r`). merge-check fails a PR of another repo with a `repo:` line. The launcher
 also runs `gh repo set-default <owner/repo>` in every checkout, and checks it took, so the agents'
 own `gh` commands default to the right repo too.
 
 ### Claude as the implementer
 
-With `"implementer": "claude"` in `~/.agworkbench.json`, or `github-workbench <issue> -Implementer
+With `"implementer": "claude"` in `~/.wagflow.json`, or `WagFlow <issue> -Implementer
 claude` (for example when Codex is out of quota), the right pane runs Claude Code on
-`/workbench-implementer` instead of Codex. The loop does not change: the implementer's mailbox box
+`/wagflow-implementer` instead of Codex. The loop does not change: the implementer's mailbox box
 is still `codex`, the relay rings it with Claude's profile (Return submits, the mid-turn hold, the
 ambiguous-composer rules), and it gets its own conversation record
-(`.workbench/state/implementer-claude.json`) and restart pin, like the planner's. The planner never
+(`.wagflow/state/implementer-claude.json`) and restart pin, like the planner's. The planner never
 commits the implementer's uncommitted work, because both panes share one index; the implementer
 commits its own. A queue started with `-Implementer` passes the switch to every member.
 
-**A checkout keeps its implementer.** The choice is saved in `.workbench/state/implementer.json`,
+**A checkout keeps its implementer.** The choice is saved in `.wagflow/state/implementer.json`,
 and a later run without `-Implementer` reuses it, so a repair run never swaps the agent under a
 running loop. A run that asks for the other tool is refused (exit 2, nothing changed) while the
 right pane holds a running agent. Close that agent, or leave it at a shell prompt, and rerun.
@@ -452,7 +459,7 @@ members, and `--profile` overrides it for one round.
 
 ### Kimi Code as the implementer
 
-With `"implementer": "kimi"`, or `github-workbench <issue> -Implementer kimi`, the right pane runs
+With `"implementer": "kimi"`, or `wagflow <issue> -Implementer kimi`, the right pane runs
 [Kimi Code](https://moonshotai.github.io/kimi-code/) (`kimi`, tested with 2.1.1). The loop is the
 same: the mailbox box stays `codex`, the relay rings it with Kimi's profile (Return submits, typed in
 its own call, well after Kimi's 120 ms paste-burst window; mail is held while a turn's spinner is
@@ -481,7 +488,7 @@ and `lib/kimi.py` prepares what the pane needs.
 - **No `git push`, no `gh`.** Kimi's shell tool is Git Bash. Its launcher (`Git\bin\bash.exe`) puts
   `/mingw64/bin` first on `PATH`, so a shim directory on the inherited `PATH` would be shadowed. The
   pane pins `KIMI_SHELL_PATH` to that bash and sets `BASH_ENV` to a script that puts
-  `.workbench\state\kimi-bin` (a `git` that refuses `push` and `send-pack`, and a `gh` that refuses
+  `.wagflow\state\kimi-bin` (a `git` that refuses `push` and `send-pack`, and a `gh` that refuses
   everything) back in front. For the spellings a shim cannot catch (`git.exe push`, an absolute
   path, `cmd /c git push`), `GIT_CONFIG_*` rewrites every GitHub push URL to a scheme git cannot
   speak, and `GH_TOKEN` is set to a token GitHub refuses. All of this lives only in Kimi's process
@@ -531,7 +538,7 @@ restarts the delay; changing from ambiguous text to an ordinary draft starts the
 subject to the same five-minute notification throttle. Existing alerts keep their status-reset
 bookkeeping. Ambiguous text after a submit does not prove success and still results in a failed
 submission alert. This is a diagnostic and alert mitigation, not the delivery fix requested in
-[#16](https://github.com/yeroo/agworkbench/issues/16), which remains open. Safe delivery through a
+[#16](https://github.com/msize/wagflow/issues/16), which remains open. Safe delivery through a
 suggestion requires the distinguishing styled read tracked in
 [agwinterm#319](https://github.com/yeroo/agwinterm/issues/319).
 When alerted mail is delivered or independently read, the relay clears its last outstanding alert
@@ -581,8 +588,8 @@ merges, unless you opted in for that checkout.
 
 ### Full autonomy (opt-in)
 
-`github-workbench <issue> -Autonomous`, `-Queue <spec> -Autonomous`, or `"autonomous": true` in
-`~/.agworkbench.json` lets a loop finish without you:
+`wagflow <issue> -Autonomous`, `-Queue <spec> -Autonomous`, or `"autonomous": true` in
+`~/.wagflow.json` lets a loop finish without you:
 - **It merges** behind the auto-merge gate. Autonomy implies auto-merge, and `-NoAutoMerge` on an
   autonomous checkout is refused.
 - **It files follow-up issues.** Every deferred finding, and every out-of-scope item in the agreed
@@ -618,7 +625,7 @@ merges, unless you opted in for that checkout.
   note, never hold the close. Older unread implementer mail holds it for 10 minutes; then the
   close goes ahead and logs the ids. It only ever touches the checkout's workspace (a named
   queue's own, else the repo's). Every step
-  goes to `.workbench/state/relay-close.log`. Nothing else is overridden on a timeout: it alerts
+  goes to `.wagflow/state/relay-close.log`. Nothing else is overridden on a timeout: it alerts
   you instead.
 - **It deletes the checkout** (#41, config `cleanup`, default `merged`). Once the issue session is
   closed, a detached `lib/cleanup.py after-close` waits (up to 10 minutes) until no `#N` session is
@@ -628,22 +635,22 @@ merges, unless you opted in for that checkout.
   For a no-PR completion, only remote-tracking refs can vouch for local commits.
   Otherwise the checkout stays and the reason is logged. The delete renames the directory to
   `<name>-issue-<N>.deleting-<ts>` first, which Windows refuses while anything holds a file or its
-  cwd inside it. Every decision goes to `<checkoutRoot>/.agworkbench-cleanup.log`; a refusal also
+  cwd inside it. Every decision goes to `<checkoutRoot>/.wagflow-cleanup.log`; a refusal also
   goes to the checkout's `relay-close.log`. `"cleanup": "build"` deletes only `target/`,
   `node_modules/`, `bin/` and `obj/` directories holding no tracked file; `"off"` keeps everything.
 
 How the close proves each thing (#33):
-- **Agents:** every Claude the workbench launches (planner and implementer) starts with prompt
+- **Agents:** every Claude the WagFlow launches (planner and implementer) starts with prompt
   suggestions off (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, plus `--settings` pointing at
-  `.workbench/state/claude-settings.json`). Otherwise the greyed suggestion in an idle composer
+  `.wagflow/state/claude-settings.json`). Otherwise the greyed suggestion in an idle composer
   makes it impossible to prove the composer empty: the relay would neither ring the agent nor
   close its session. `claudeArgs` may not pass its own `--settings`; put your settings in
   `~/.claude/settings.json`. An adopted Claude (your own session) needs
   `"promptSuggestionEnabled": false` there too, and the relay's hold and close logs say so.
-- **Helpers:** `wb.py revmux` and `wb.py human-review` start their sessions in agwinterm's direct
+- **Helpers:** `wb.py revmux` and `wb.py human-review` start their sessions in WagTerm's direct
   command mode: the helper runs with no shell around it, and when it ends its pane stays on screen
   with its input closed, so nothing can be typed there and nothing more is printed. As its last act
-  the helper writes a completion marker (`.workbench/state/helpers/<pane>.done`, holding what the
+  the helper writes a completion marker (`.wagflow/state/helpers/<pane>.done`, holding what the
   pane showed). A helper closes when its marker exists, no shell is live in its pane, the pane shows
   exactly the marker's rows, and it has been unchanged for 30 s. Helpers close first, even while the
   agents are still busy. A helper session opened the old way, inside a shell, is left for you.
@@ -652,8 +659,8 @@ How the close proves each thing (#33):
   completion marker exists and the result mail it names (the revmux report, or the suite's result)
   has been read in the box it went to. The pane is not checked - once the result is read the
   session goes, whatever it shows. A helper whose result is still unread stays, and so does your
-  revdiff (`#N your review`). The report and log files in `.workbench/review/` stay; each close is
-  logged in `.workbench/state/relay-close.log` and in the relay's pane. `closeHelpers: false` keeps
+  revdiff (`#N your review`). The report and log files in `.wagflow/review/` stay; each close is
+  logged in `.wagflow/state/relay-close.log` and in the relay's pane. `closeHelpers: false` keeps
   every helper open until the loop's close, as before.
 - **A relay that died or gave up:** the queue's conductor runs the same close for a merged or no-PR closed member
   whose close has been pending for 15 minutes and whose `#N relay` session is gone. While that
@@ -677,14 +684,14 @@ Every issue gets a full clone under `checkoutRoot`, and a Rust or Node build can
 An autonomous loop deletes its own checkout after the merge (above). For every other checkout:
 
 ```
-github-workbench -Cleanup -DryRun                 # candidate <path> <size> / keep <path>: <why> / skip <path>: <why>
-github-workbench -Cleanup                         # delete the candidates that pass the checks
-github-workbench -Cleanup -Repo yeroo/docxy -BuildOnly   # only their build outputs
+wagflow -Cleanup -DryRun                 # candidate <path> <size> / keep <path>: <why> / skip <path>: <why>
+wagflow -Cleanup                         # delete the candidates that pass the checks
+wagflow -Cleanup -Repo yeroo/docxy -BuildOnly   # only their build outputs
 ```
 
 A checkout is a candidate when its branch has no open PR, and either its issue is closed or the
 branch has a merged or closed PR. Each candidate gets the same checks as the autonomous delete, and the sweep refuses them
-all when the session tree cannot be read (run it inside agwinterm). Leftover `*.deleting-*`
+all when the session tree cannot be read (run it inside WagTerm). Leftover `*.deleting-*`
 directories from an interrupted delete are removed; one that is a link is kept, never followed. It exits 0, 1 when it kept a candidate for a
 safety reason, and 2 on a usage or GitHub error.
 
@@ -714,10 +721,10 @@ launcher timeout, terminal, pane, agent-start or relay failure returns the membe
 After two consecutive infrastructure failures, the queue announces `launches failing: ...` and
 shows blocked; it keeps probing one member at a time until a launch succeeds. Checkout or issue
 errors still fail the member and require `-Retry`. Each failed launch closes the issue and relay
-sessions it created. A record in the checkout's `.workbench/state/queue-launch.json` lets a
+sessions it created. A record in the checkout's `.wagflow/state/queue-launch.json` lets a
 restarted conductor or retry finish closing sessions left by an interrupted launcher. Queue mode
 starts Claude only after the implementer pane has a proven shell and has been started. If the
-agwinterm window is minimized or a pane is narrower than 40 columns, the launcher restores the
+WagTerm window is minimized or a pane is narrower than 40 columns, the launcher restores the
 window without activating it and waits for a usable pane before starting agents.
 If an orphaned launcher still holds its member or checkout lock after 30 minutes, that member
 fails instead; stop the stuck launcher and use `-Retry`.
@@ -729,7 +736,7 @@ panes every 30 s. It recognises an agent's own limit message by its position, as
 above an idle composer or right above the shell prompt after the agent exited. Text an agent
 merely printed does not count: a diff, a grep, test output or a file dump. When the relay sees it
 twice in a row, it tells the planner by mail and notifies you. When the limited agent is the
-implementer, the planner runs `github-workbench <issue> -Failover`, which:
+implementer, the planner runs `wagflow <issue> -Failover`, which:
 - takes an exited agent as it is. When the agent is still running, it stops it only when the pane
   has not changed for 90 s, there is no `.git/index.lock`, and exactly one agent process belongs to
   this checkout. It stops that process tree and never types into the agent;
@@ -740,7 +747,7 @@ implementer, the planner runs `github-workbench <issue> -Failover`, which:
 - lets the planner hand the work over by mail (`wb.py handover` computes the open request).
 
 A tool with a recorded limit is never switched back to automatically. Once its limit has reset,
-clear it with `github-workbench <issue> -Implementer <tool>`. Codex's "Approaching rate limits"
+clear it with `wagflow <issue> -Implementer <tool>`. Codex's "Approaching rate limits"
 chooser (under 10% of its limit left) fails over the same way. Nobody answers it, and it counts
 only at the bottom of the pane, where the chooser replaces the composer. The planner's own limit
 cannot be failed over: you get the notification, and the loop waits. Set `"failover": false` to
@@ -760,7 +767,7 @@ queue that should run Kimi at its own pace, about five issues a day with nobody 
 fails over nor stops for you. `-WaitOnLimit` makes it wait:
 
 ```powershell
-github-workbench -Queue 'where: kimi AND priority IN [P2, P3]' -Repo yeroo/docxy -QueueName kimi -Workspace docxy-kimi -Implementer kimi -WaitOnLimit -Autonomous -Watch
+wagflow -Queue 'where: kimi AND priority IN [P2, P3]' -Repo yeroo/docxy -QueueName kimi -Workspace docxy-kimi -Implementer kimi -WaitOnLimit -Autonomous -Watch
 ```
 
 What waits (#77), for a member launched with `-WaitOnLimit` (saved as `onLimit: "wait"` in its
@@ -811,8 +818,8 @@ Keep Claude reviewers in the roster (`kimi-mixed` does), and never merge on Kimi
 
 ### Auto-merge (opt-in)
 
-`github-workbench <issue> -AutoMerge`, `-Queue <spec> -AutoMerge`, or `"autoMerge": true` in
-`~/.agworkbench.json` lets the planner merge its own PR. It does so only when all of these hold:
+`wagflow <issue> -AutoMerge`, `-Queue <spec> -AutoMerge`, or `"autoMerge": true` in
+`~/.wagflow.json` lets the planner merge its own PR. It does so only when all of these hold:
 - the last review round is clean, with every finding fixed or disputed with evidence and none
   deferred - or review **stopped** at a round with no Major (below), and its remaining minors are
   filed as follow-ups;
@@ -831,7 +838,7 @@ starts with `Batch:`, it has a `batch` or `big` label, its diff against the base
 with `-BigReview` (`-Queue <spec> -BigReview` for every member). An issue judged big stays big, by the flag
 too: `-NoBigReview` clears the flag for later launches, but once `wb.py settings` or `review-round` has
 seen the issue big it keeps the big cap. `wb.py settings` prints `reviewCap=<n>` and why, e.g.
-`reviewCap=10 (big: diff 1623 lines > 1500 vs origin/main)`.
+`reviewCap=10 (big: diff 1623 lines > 1500 vs origin/master)`.
 A degraded round never stops review. The planner files a stop's deferred minors right after it
 opens the PR, whether or not auto-merge is on. `wb.py review-round --summary` prints the line the PR body and
 the merge note carry, e.g. `review stopped: round 2 had no Major; 3 minor finding(s) in <URL>`.
@@ -854,7 +861,7 @@ That check is read-only. It requires:
   (optionally `@someone` first, `please` or `!` after). Bots never lift a hold.
 
 Claude posts with your GitHub account, so it ends everything it writes on GitHub with
-`<!-- agworkbench:planner -->`. merge-check treats every body without that marker as yours. Hold
+`<!-- wagflow:planner -->`. merge-check treats every body without that marker as yours. Hold
 words fail safe: "I'll wait for CI" holds too. The merge is `gh pr merge --merge --delete-branch
 --match-head-commit <sha>`, so GitHub refuses it if anything was pushed after the tests ran. A
 comment on the PR then states each checked condition.
@@ -907,7 +914,7 @@ If any condition fails, the reasons go on the PR and in chat, and the PR waits f
 The choice is saved per checkout like the implementer: a rerun without the switch keeps it,
 `-NoAutoMerge` turns it off (even while the agents are running), and a queue saves either switch and
 passes it to the members it launches from then on. To stop a member that is already running, rerun
-`github-workbench <n> -NoAutoMerge` for its checkout. The conductor never merges; a member's planner does, and the queue then
+`wagflow <n> -NoAutoMerge` for its checkout. The conductor never merges; a member's planner does, and the queue then
 records the member as merged.
 
 The per-issue clone gets a Codex trust entry in `~/.codex/config.toml` — the same entry Codex
@@ -926,7 +933,7 @@ Mail to a Kimi implementer whose pane shows its usage limit does not count as un
 woke nothing, so the stall period still runs. With `-WaitOnLimit` the relay then waits the limit out;
 otherwise the stall pointer names the limit and the held mail (#88).
 It is not stalled when it is done, when it records that it waits on you (`wb.py status blocked`
-writes `.workbench/state/waiting.json`; loop.json `blocked` or `pr-open`), when a PR is open for
+writes `.wagflow/state/waiting.json`; loop.json `blocked` or `pr-open`), when a PR is open for
 your review (outside auto-merge), when an auto-merge PR still has a check running (the planner waits on
 CI), or during a usage-limit episode. A helper without its completion marker counts as running while its pane
 changes. After two periods of silence it no longer does, and the pointer names it. Your revdiff always counts.
@@ -940,7 +947,7 @@ changes. After two periods of silence it no longer does, and the pointer names i
   a reason starting `stalled:` in queue mode.
 - Progress resets the clock: a commit, any mail, a helper starting or finishing, a loop report.
 
-It only mails, and it never answers a prompt. The sidebar status is not used: agwinterm's agent
+It only mails, and it never answers a prompt. The sidebar status is not used: WagTerm's agent
 hooks rewrite it on every turn.
 
 **Suites and builds finish visibly.** `wb.py suite --label <sha7> -- <command>` runs a long command
@@ -951,20 +958,20 @@ containing a cmd metacharacter (`& | < > ^ % ! " ( )`) is refused before the ses
 command yourself, e.g. `-- pwsh -NoProfile -Command "..."`. The helper waits for the command, not for
 processes it left behind: once the command exits, output still held open by a child (a build server,
 a detached test server) is read for 5 s and then left unread. Its output goes to the pane and, as UTF-8 without a BOM, to
-`.workbench/review/suite-<label>.log`, even when the command writes UTF-16. When it ends, it mails
+`.wagflow/review/suite-<label>.log`, even when the command writes UTF-16. When it ends, it mails
 the result to the caller's box from `helper`: exit code, failure count, and the log's tail. Its last act is to write a completion marker with both and
 the result mail's id and box, so the relay can close it once that mail has been read (#84). revmux and revdiff rounds that fail also mail the planner
 ("ended without a report") instead of ending silently.
 
 ## Configuration
 
-`~/.agworkbench.json` (created by the installer; all keys optional):
+`~/.wagflow.json` (created by the installer; all keys optional):
 
 | key | default | meaning |
 |---|---|---|
 | `claudeArgs` | `[]` | extra arguments for `claude` — `-Bypass` puts `--dangerously-skip-permissions` here |
 | `codexArgs` | `[]` | extra arguments for `codex`; anything touching the sandbox policy is refused |
-| `checkoutRoot` | `~/source/workbench` | where per-issue clones go |
+| `checkoutRoot` | `~/source/wagflow` | where per-issue clones go |
 | `allowNetwork` | `false` | let Codex's sandbox reach the network (package installs, tests that fetch); with a Claude implementer, allows its web tools; with Kimi, drops the launcher's check that Kimi's own `[tools] disabled` turns its web tools off |
 | `implementer` | `"codex"` | who runs the right pane (`"codex"`, `"claude"` or `"kimi"`) in a new checkout; an existing checkout keeps its saved tool. `-Implementer` changes it for that checkout (refused while a live agent holds the pane) or sets it for a queue's members |
 | `revmuxProfile` | by implementer | revmux profile for review rounds: `comprehensive` with Codex, `claude-only` with Claude, `kimi-mixed` with Kimi when revmux has it (else `claude-only`) |
@@ -990,12 +997,13 @@ the result mail's id and box, so the relay can close it once that mail has been 
 ## Layout
 
 ```
-github-workbench.cmd        the command: works in cmd and PowerShell
+wagflow.cmd        the command: works in cmd and PowerShell
 install.ps1                 prerequisites, the Claude command, the Codex skill, PATH
-lib/github-workbench.ps1    terminal detection, clone, session, split, relay
-lib/pane-claude.ps1         left pane: claude "/start-github-issue <issue>"
+lib/wagflow.ps1    terminal detection, clone, session, split, relay
+lib/WagFlow.Common.ps1      shared launcher and pane helpers
+lib/pane-claude.ps1         left pane: claude "/wagflow-start <issue>"
 lib/pane-codex.ps1          right pane: codex, sandboxed, with the implementer prompt
-lib/pane-implementer-claude.ps1  right pane with implementer=claude: claude "/workbench-implementer <issue>"
+lib/pane-implementer-claude.ps1  right pane with implementer=claude: claude "/wagflow-implementer <issue>"
 lib/pane-implementer-kimi.ps1    right pane with implementer=kimi: kimi --yolo, with its role and guard rails (#65)
 lib/kimi.py                 the Kimi pane's role file, git/gh shims, web-tool check and trust record
 kimi/AGENTS.md, kimi/bin/   the Kimi implementer's role and its shell shims (templates)
@@ -1010,19 +1018,21 @@ lib/run_helper.py           a long command (the suite, a build) in its own sessi
 lib/run-revmux.ps1          one review round, report posted to Claude
 lib/human-review.ps1        revdiff for you, annotations posted to Claude
 lib/wb.py                   opens those sessions for Claude with correct Windows paths
-lib/agmsg.py, hub.py,       the mailbox and the fail-closed pane messenger, vendored from the
-    agw.py, peerchat.py     tested ai-hub tooling
+lib/wagmsg.py, hub.py,       the mailbox and the fail-closed pane messenger, vendored from the
+    wag.py, peerchat.py     tested ai-hub tooling
 claude/commands/start-github-issue.md      the loop, from Claude's side
-claude/commands/workbench-implementer.md   the loop, from the implementer's side when it is Claude
+claude/commands/wagflow-implementer.md   the loop, from the implementer's side when it is Claude
 claude/commands/triage-issue.md            one issue's priority judgment; triage.py runs it headless
-codex/skills/workbench-implementer/        the loop, from Codex's side
+codex/skills/wagflow-implementer/        the loop, from Codex's side
 tests/                      python -m unittest discover -s tests   (no terminal needed)
 ```
 
 ## Credits
 
 The layout, the peer-chat mechanics and the principle that the value is disagreement are
-umputun's, from agterm's `two-agent-chat` recipe. revmux and revdiff are his too. agwinterm is the
-Windows terminal that makes the rest possible.
+umputun's, from agterm's `two-agent-chat` recipe. revmux and revdiff are his too.
+[agworkbench](https://github.com/yeroo/agworkbench) by yeroo is the upstream workflow.
+[WagTerm](https://github.com/msize/wagterm), forked from
+[agwinterm](https://github.com/yeroo/agwinterm), is the Windows terminal that makes the rest possible.
 
 MIT licence.

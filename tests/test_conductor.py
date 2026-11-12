@@ -33,13 +33,13 @@ class QueueCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.config = self.root / 'config.json'
         self.config.write_text(json.dumps({'checkoutRoot': str(self.root / 'clones')}))
-        self.enterContext(patch.dict(os.environ, {'AGWORKBENCH_CONFIG': str(self.config),
-                                                 'AGWINTERM_ENABLED': '1', 'AGWINTERM_SESSION_ID': str(uuid.uuid4())}))
+        self.enterContext(patch.dict(os.environ, {'WAGFLOW_CONFIG': str(self.config),
+                                                 'WAGTERM_ENABLED': '1', 'WAGTERM_SESSION_ID': str(uuid.uuid4())}))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         self.requests = []
-        self.enterContext(patch.object(q.agw, 'request', self.terminal))
-        self.enterContext(patch.object(q.agw, 'notify'))
-        self.enterContext(patch.object(q.agw, 'set_status'))
+        self.enterContext(patch.object(q.wag, 'request', self.terminal))
+        self.enterContext(patch.object(q.wag, 'notify'))
+        self.enterContext(patch.object(q.wag, 'set_status'))
         # The in-hand lookups (#28) call gh and the terminal; queue mechanics tests assume none in hand.
         self.real_in_hand = q.in_hand
         self.in_hand = self.enterContext(patch.object(q, 'in_hand', return_value={}))
@@ -83,7 +83,7 @@ class QueueCase(unittest.TestCase):
 
     def spawn(self, data, m):
         self.launches.append((m['number'], m['attempt'], m['token']))
-        directory = Path(m['checkout']) / '.workbench/state'
+        directory = Path(m['checkout']) / '.wagflow/state'
         directory.mkdir(parents=True, exist_ok=True)
         identity = directory / 'claude.json'
         if not identity.exists():
@@ -110,7 +110,7 @@ class QueueCase(unittest.TestCase):
     def report(self, n, state='pr-open', **kwargs):
         m = self.member(n)
         checkout = Path(m['checkout'])
-        identity = q.read_json(checkout / '.workbench/state/claude.json')
+        identity = q.read_json(checkout / '.wagflow/state/claude.json')
         if state == 'pr-open':
             kwargs.setdefault('pr', f'https://github.com/o/r/pull/{n}')
         with patch.dict(os.environ, CLAUDE_CODE_SESSION_ID=identity['sessionId']):
@@ -214,7 +214,7 @@ class QueueCase(unittest.TestCase):
         old_revision = self.member()['consumedRev']
         worker.tick()
         self.assertEqual(old_revision, self.member()['consumedRev'])
-        directory = Path(self.member()['checkout']) / '.workbench/state'
+        directory = Path(self.member()['checkout']) / '.wagflow/state'
         q.atomic_json(directory / 'claude.json', {'sessionId': str(uuid.uuid4())})
         report = self.report(1)
         self.assertEqual(1, report['rev'])
@@ -282,7 +282,7 @@ class QueueCase(unittest.TestCase):
             if command == 'session.restore':
                 return {'action': 'failed'}
             return real_terminal(command, **kwargs)
-        with patch.object(q.agw, 'request', fail_pin), self.assertRaisesRegex(q.QueueError, 'pin failed'):
+        with patch.object(q.wag, 'request', fail_pin), self.assertRaisesRegex(q.QueueError, 'pin failed'):
             self.start('o/r#1')
         owner = self.store.load()['owner']
         self.assertFalse(owner['pinned'])
@@ -309,7 +309,7 @@ class QueueCase(unittest.TestCase):
                 self.start('o/r#1')
             except Exception as err:
                 failures.append(err)
-        with patch.object(q.agw, 'request', terminal):
+        with patch.object(q.wag, 'request', terminal):
             thread = threading.Thread(target=first)
             thread.start()
             try:
@@ -405,8 +405,8 @@ class QueueCase(unittest.TestCase):
             self.assertEqual(0, worker.run())
         self.assertEqual(7, len(attempts))
         self.assertEqual(6, sleep.call_count)
-        q.agw.notify.assert_called_once()
-        self.assertEqual('completed', q.agw.set_status.call_args.args[0])
+        q.wag.notify.assert_called_once()
+        self.assertEqual('completed', q.wag.set_status.call_args.args[0])
 
     def test_corrupt_state_blocks_and_exits_without_overwriting_it(self):
         self.start('o/r#1')
@@ -418,8 +418,8 @@ class QueueCase(unittest.TestCase):
         with patch.object(q.time, 'sleep') as sleep:
             self.assertEqual(1, worker.run())
         sleep.assert_not_called()
-        q.agw.notify.assert_called_once()
-        self.assertEqual('blocked', q.agw.set_status.call_args.args[0])
+        q.wag.notify.assert_called_once()
+        self.assertEqual('blocked', q.wag.set_status.call_args.args[0])
         self.assertEqual('{broken', self.store.path.read_text())
         self.assertFalse(self.store.running())
 
@@ -541,7 +541,7 @@ class QueueCase(unittest.TestCase):
         worker = self.worker()
         worker.tick()  # crash after intent, before child launch
         self.assertEqual([1], [x[0] for x in self.launches])
-        original = q.read_json(Path(self.member()['checkout']) / '.workbench/state/claude.json')['sessionId']
+        original = q.read_json(Path(self.member()['checkout']) / '.wagflow/state/claude.json')['sessionId']
         restarted = self.worker()
         restarted.tick()  # result checkpoint exists even though owner lost its job handle
         self.assertEqual('active', self.member()['state'])
@@ -550,7 +550,7 @@ class QueueCase(unittest.TestCase):
             data['members'][0].update(state='launching', result=None, startedAt=self.now)
         restarted.tick()  # session exists but launch result was not checkpointed
         self.assertEqual([1, 1], [x[0] for x in self.launches])
-        self.assertEqual(original, q.read_json(Path(self.member()['checkout']) / '.workbench/state/claude.json')['sessionId'])
+        self.assertEqual(original, q.read_json(Path(self.member()['checkout']) / '.wagflow/state/claude.json')['sessionId'])
 
     def test_launcher_exit_and_timeout_back_off_the_same_member(self):
         self.start('o/r#1,2')
@@ -600,7 +600,7 @@ class QueueCase(unittest.TestCase):
     def test_done_without_pr_open_is_adopted_and_merged(self):
         self.start('o/r#1')
         worker = self.worker(); worker.tick(); worker.tick()
-        state = Path(self.member()['checkout']) / '.workbench/state'
+        state = Path(self.member()['checkout']) / '.wagflow/state'
         q.atomic_json(state / 'loop-done.json', {'pr': 457, 'at': self.now})
         self.pr_state = 'MERGED'
         worker.tick()
@@ -611,7 +611,7 @@ class QueueCase(unittest.TestCase):
     def test_adopt_done_ignores_old_no_pr_and_malformed_records(self):
         self.start('o/r#1')
         worker = self.worker(); worker.tick(); worker.tick()
-        state = Path(self.member()['checkout']) / '.workbench/state'
+        state = Path(self.member()['checkout']) / '.wagflow/state'
         for record in ({'pr': 2, 'at': self.now - 1}, {'pr': 2, 'at': True},
                        {'pr': True, 'at': self.now}, {'pr': 0, 'at': self.now},
                        {'pr': 2, 'at': float('nan')}, {'pr': 2, 'at': self.now, 'noPr': True},
@@ -647,7 +647,7 @@ class QueueCase(unittest.TestCase):
             data['members'][0].update(state='merged', pr='https://github.com/O/R/pull/5',
                                       prState='MERGED', slotReleased=True)
         checkout = Path(self.member()['checkout'])
-        identity = q.read_json(checkout / '.workbench/state/claude.json')
+        identity = q.read_json(checkout / '.wagflow/state/claude.json')
         with patch.dict(os.environ, CLAUDE_CODE_SESSION_ID=identity['sessionId']):
             self.assertEqual(0, wb.loop_done(checkout, '5', 'sha'))
         worker.tick()
@@ -661,14 +661,14 @@ class QueueCase(unittest.TestCase):
         self.start('o/r#1')
         worker = self.worker(); worker.tick(); worker.tick()
         self.now += 1801
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}):
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}):
             worker.refresh_remote()
         self.assertEqual(self.now, self.member()['goneSince'])
         self.now += 1801
         worker.gh = Mock(side_effect=lambda *args: ([{'number': 457, 'state': 'MERGED', 'isCrossRepository': False}]
                               if args[:2] == ('pr', 'list') else AssertionError(args)))
         branch = Mock(returncode=0, stdout='issue-1-fix\n')
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=branch):
             worker.refresh_remote()
         self.assertEqual(('merged', 'MERGED', True),
@@ -681,32 +681,32 @@ class QueueCase(unittest.TestCase):
         worker = self.worker(); worker.tick(); worker.tick()
         self.now += 1801
         live = {'workspaces': [{'name': 'r', 'sessions': [{'name': '#1 helper'}]}]}
-        with patch.object(q.agw, 'tree', return_value=live):
+        with patch.object(q.wag, 'tree', return_value=live):
             worker.refresh_remote()
         self.assertNotIn('goneSince', self.member())
         self.now += 301
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}):
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}):
             worker.refresh_remote()
         self.assertIn('goneSince', self.member())
         self.now += 1801
         branch = Mock(returncode=1, stdout='')
         gh = Mock(side_effect=AssertionError('empty branch must not query GitHub'))
         worker.gh = gh
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=branch):
             worker.refresh_remote()
         self.assertEqual('active', self.member()['state'])
         self.assertIn('goneSince', self.member())
         gh.assert_not_called()
         worker.gh = Mock(return_value=[{'number': 5, 'state': 'MERGED'}])
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='issue-1-fix')):
             worker.next_pr = 0
             worker.refresh_remote()
         self.assertEqual('active', self.member()['state'])
         self.assertIn('goneSince', self.member())
         worker.gh = Mock(side_effect=lambda *args: [] if args[:2] == ('pr', 'list') else {'state': 'CLOSED'})
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='issue-1-fix')):
             worker.next_pr = 0
             worker.refresh_remote()
@@ -717,11 +717,11 @@ class QueueCase(unittest.TestCase):
         self.start('o/r#1')
         worker = self.worker(); worker.tick(); worker.tick()
         self.now += 1801
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}):
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}):
             worker.refresh_remote()
         self.assertIn('goneSince', self.member())
         self.now += 301
-        with patch.object(q.agw, 'tree', return_value={'workspaces': [
+        with patch.object(q.wag, 'tree', return_value={'workspaces': [
                 {'name': 'r', 'sessions': [{'name': '#1 review'}]}]}):
             worker.refresh_remote()
         self.assertNotIn('goneSince', self.member())
@@ -734,7 +734,7 @@ class QueueCase(unittest.TestCase):
         self.now += 1801
         worker.gh = Mock(side_effect=lambda *args: [{'number': 12, 'state': 'OPEN', 'isCrossRepository': False}]
                          if args[:2] == ('pr', 'list') else {'state': 'CLOSED'})
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='issue-1-fix')):
             worker.refresh_remote()
         self.assertEqual(('active', None, False),
@@ -750,7 +750,7 @@ class QueueCase(unittest.TestCase):
         prs = [{'number': 1, 'state': 'MERGED', 'isCrossRepository': False},
                {'number': 2, 'state': 'OPEN', 'isCrossRepository': False}]
         worker.gh = Mock(return_value=prs)
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='issue-1-fix')):
             worker.refresh_remote()
         self.assertEqual(('active', None, False),
@@ -774,7 +774,7 @@ class QueueCase(unittest.TestCase):
         worker.gh = Mock(side_effect=gh)
         def branch(args, **kwargs):
             return Mock(returncode=0, stdout='issue-1-fix' if 'r-issue-1' in args[2] else 'issue-2-fix')
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', side_effect=branch):
             worker.refresh_remote()
         self.assertEqual(('closed', None), (self.member(1)['state'], self.member(1)['pr']))
@@ -785,11 +785,11 @@ class QueueCase(unittest.TestCase):
         worker = self.worker(); worker.tick(); worker.tick()
         with self.store.transaction() as data:
             data['members'][0]['goneSince'] = self.now - 1801
-        state = Path(self.member()['checkout']) / '.workbench/state'
+        state = Path(self.member()['checkout']) / '.wagflow/state'
         q.atomic_json(state / 'relay.json', {'branch': 'issue-1-fix'})
         self.now += 1801
         worker.gh = Mock(return_value=[{'number': 5, 'state': 'MERGED', 'isCrossRepository': False}])
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='main')) as git:
             worker.refresh_remote()
         git.assert_not_called()
@@ -803,7 +803,7 @@ class QueueCase(unittest.TestCase):
             data['members'][0]['goneSince'] = self.now - 1801
         self.now += 1801
         worker.gh = Mock(side_effect=AssertionError('wrong branch queried'))
-        with patch.object(q.agw, 'tree', return_value={'workspaces': []}), \
+        with patch.object(q.wag, 'tree', return_value={'workspaces': []}), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='main')):
             worker.refresh_remote()
         worker.gh.assert_not_called()
@@ -819,7 +819,7 @@ class QueueCase(unittest.TestCase):
         worker.gh = Mock(return_value=[{'number': 5, 'state': 'MERGED', 'isCrossRepository': False}])
         empty = {'workspaces': []}
         live = {'workspaces': [{'name': 'r', 'sessions': [{'name': '#1 review'}]}]}
-        with patch.object(q.agw, 'tree', side_effect=[empty, live]), \
+        with patch.object(q.wag, 'tree', side_effect=[empty, live]), \
                 patch.object(q.subprocess, 'run', return_value=Mock(returncode=0, stdout='issue-1-fix')):
             worker.refresh_remote()
         self.assertEqual('active', self.member()['state'])
@@ -1078,7 +1078,7 @@ class QueueBugs(unittest.TestCase):
         self.closing = {}
 
     def fake_in_hand(self, repo, numbers, root, queue_path, gh=None, tree=None, **named):
-        # The tree is passed through (None -> the live agw.tree(), which each test patches).
+        # The tree is passed through (None -> the live wag.tree(), which each test patches).
         return self.real_in_hand(repo, numbers, root, queue_path, gh or self.fake_gh, tree, **named)
 
     def fake_gh(self, *args):
@@ -1095,7 +1095,7 @@ class QueueBugs(unittest.TestCase):
         raise AssertionError(args)
 
     def start_bugs(self, spec='bugs', repo='o/r', **kwargs):
-        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             return q.start_queue(spec, repo=repo, root=self.root / 'queues', gh=self.fake_gh, **kwargs)
 
     def members(self):
@@ -1124,20 +1124,20 @@ class QueueBugs(unittest.TestCase):
         self.tree = {'workspaces': [{'name': 'r', 'sessions': [{'id': 's3', 'name': '#3 fix the thing'},
                                                                {'id': 'h5', 'name': '#5 revmux r1'}]},
                                     {'name': 'other', 'sessions': [{'id': 'x', 'name': '#5 elsewhere'}]}]}
-        foreign = clones / 'r-issue-4' / '.workbench' / 'state'
+        foreign = clones / 'r-issue-4' / '.wagflow' / 'state'
         foreign.mkdir(parents=True)
         self.start_bugs()
         self.assertEqual([5], self.members())            # a fork's PR, a closed PR, a helper, another repo: not in hand
         out = self.output()
         self.assertIn('#1 skipped: pr: open PR #40 on issue-1-fix', out)
         self.assertIn('#2 skipped: pr: open PR #42 will close it', out)
-        self.assertIn('#3 skipped: session: a live workbench session is open for it', out)
+        self.assertIn('#3 skipped: session: a live WagFlow session is open for it', out)
         self.assertIn('#4 skipped: checkout exists from an earlier loop', out)
 
     @unittest.skipUnless(os.name == 'nt', 'the launcher lock is a Windows share-mode lock')
     def test_a_held_launch_lock_is_skipped_but_a_stale_lock_file_is_not(self):
         import ctypes
-        lock = self.root / 'clones' / 'r-issue-2' / '.workbench' / 'state' / 'launch.lock'
+        lock = self.root / 'clones' / 'r-issue-2' / '.wagflow' / 'state' / 'launch.lock'
         lock.parent.mkdir(parents=True)
         lock.write_text('')
         membership = lock.parent / 'queue-member.json'
@@ -1165,7 +1165,7 @@ class QueueBugs(unittest.TestCase):
         worker = self.worker()
         worker.gh = self.fake_gh
         self.pulls = []                                  # the PR was closed without merging
-        with patch.object(q.agw, 'tree', return_value=self.tree):
+        with patch.object(q.wag, 'tree', return_value=self.tree):
             worker.refresh_remote()
         self.assertEqual([2, 3, 4, 5, 1], self.members())
 
@@ -1175,7 +1175,7 @@ class QueueBugs(unittest.TestCase):
         worker = self.worker()
         worker.gh = self.fake_gh
         before = self.output().count('#1 skipped')
-        with patch.object(q.agw, 'tree', return_value=self.tree):
+        with patch.object(q.wag, 'tree', return_value=self.tree):
             for _ in range(3):
                 worker.refresh_remote()
                 self.now += 300
@@ -1187,7 +1187,7 @@ class QueueBugs(unittest.TestCase):
                 raise q.QueueError('HTTP 502')
             return self.fake_gh(*args)
         with self.assertRaises(q.QueueError):
-            with patch.object(q, 'gh_json', broken), patch.object(q.agw, 'tree', return_value=self.tree):
+            with patch.object(q, 'gh_json', broken), patch.object(q.wag, 'tree', return_value=self.tree):
                 q.start_queue('bugs', repo='o/r', root=self.root / 'queues', gh=broken)
         self.assertFalse(self.store.path.exists())
 
@@ -1199,7 +1199,7 @@ class QueueBugs(unittest.TestCase):
         before = self.members()
         with self.store.transaction() as data:
             data['members'] = [m for m in data['members'] if m['number'] != 5]
-        with patch.object(q.agw, 'tree', return_value=self.tree):
+        with patch.object(q.wag, 'tree', return_value=self.tree):
             worker.refresh_remote()
         self.assertEqual([n for n in before if n != 5], self.members())
         self.assertIn('label scan', worker.errors)
@@ -1247,7 +1247,7 @@ class QueueBugs(unittest.TestCase):
         self.assertEqual([3, 4, 5], self.members())
         out = self.output()
         self.assertIn('#1 skipped: pr: open PR #40 on issue-1-fix', out)
-        self.assertIn('#2 skipped: session: a live workbench session is open for it', out)
+        self.assertIn('#2 skipped: session: a live WagFlow session is open for it', out)
 
     def test_an_unreachable_terminal_on_a_rescan_adds_nothing_and_keeps_running(self):
         # r19: CtlError is a RuntimeError, which Worker.run would not catch.
@@ -1256,7 +1256,7 @@ class QueueBugs(unittest.TestCase):
         worker.gh = self.fake_gh
         with self.store.transaction() as data:
             data['members'] = [m for m in data['members'] if m['number'] != 5]
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('agwinterm is not running')):
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('WagTerm is not running')):
             worker.refresh_remote()
         self.assertEqual([1, 2, 3, 4], self.members())
         self.assertIn('label scan', worker.errors)
@@ -1277,7 +1277,7 @@ class CloseBackstop(unittest.TestCase):
             # Issue 7's PR is 42: relay.json and loop-done.json hold the PR number, not the issue's.
             m.update(state='merged', slotReleased=True, pr='https://github.com/o/r/pull/42', prState='MERGED')
             self.checkout = Path(m['checkout'])
-        self.state = self.checkout / '.workbench' / 'state'
+        self.state = self.checkout / '.wagflow' / 'state'
         self.state.mkdir(parents=True)
         for name, value in (('relay.json', {'close_pending': 42, 'branch': 'issue-7'}), ('implementer.json', {'autonomous': True}),
                             ('loop-done.json', {'pr': 42}),
@@ -1291,10 +1291,10 @@ class CloseBackstop(unittest.TestCase):
             {'id': self.PLANNER, 'name': '#7 fix', 'paneIds': [self.PLANNER, self.IMPLEMENTER]},
             {'id': 'relay-7', 'name': '#7 relay'}]}]}
         self.actions = []
-        self.enterContext(patch.object(q.agw, 'tree', side_effect=lambda: self.tree))
-        self.enterContext(patch.object(q.agw, 'pane_text', side_effect=lambda pane: self.text[pane]))
-        self.enterContext(patch.object(q.agw, 'close_session', side_effect=lambda sid: self.actions.append(('close', sid))))
-        self.enterContext(patch.object(q.agw, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
+        self.enterContext(patch.object(q.wag, 'tree', side_effect=lambda: self.tree))
+        self.enterContext(patch.object(q.wag, 'pane_text', side_effect=lambda pane: self.text[pane]))
+        self.enterContext(patch.object(q.wag, 'close_session', side_effect=lambda sid: self.actions.append(('close', sid))))
+        self.enterContext(patch.object(q.wag, 'clear_restore', side_effect=lambda pane: self.actions.append(('unpin', pane))))
         self.w = self.worker()
         self.w.notify = Mock()
 
@@ -1610,7 +1610,7 @@ class CloseBackstop(unittest.TestCase):
 
     def test_no_backstop_cleanup_without_the_close(self):
         self.relay_gone()
-        box = self.checkout / '.workbench' / 'inbox' / 'claude'
+        box = self.checkout / '.wagflow' / 'inbox' / 'claude'
         box.mkdir(parents=True)
         (box / 'h1.md').write_text('---\nid: h1\nfrom: human\nto: claude\nsubject: wait\n---\nx\n', encoding='utf-8')
         self.run_for(900 + closer.CLOSE_WAIT + 60)
@@ -1631,7 +1631,7 @@ class CloseBackstop(unittest.TestCase):
 
     def test_a_close_that_cannot_complete_is_refused_and_flagged_never_forced(self):
         self.relay_gone()
-        box = self.checkout / '.workbench' / 'inbox' / 'claude'
+        box = self.checkout / '.wagflow' / 'inbox' / 'claude'
         box.mkdir(parents=True)
         (box / 'h1.md').write_text('---\nid: h1\nfrom: human\nto: claude\nsubject: wait\n---\nx\n', encoding='utf-8')
         self.run_for(900 + closer.CLOSE_WAIT + 60)
@@ -1665,15 +1665,15 @@ class CloseBackstop(unittest.TestCase):
 
     def test_end_close_leaves_a_close_pending_it_did_not_run(self):
         q.atomic_json(self.state / 'relay.json', {'close_pending': 43, 'other': 1})
-        self.w.end_close(self.member(7), 42, self.checkout / '.workbench', stuck=None)
+        self.w.end_close(self.member(7), 42, self.checkout / '.wagflow', stuck=None)
         self.assertEqual({'close_pending': 43, 'other': 1}, q.read_json(self.state / 'relay.json'))
-        self.w.end_close(self.member(7), 43, self.checkout / '.workbench', stuck=None)
+        self.w.end_close(self.member(7), 43, self.checkout / '.wagflow', stuck=None)
         self.assertEqual({'other': 1}, q.read_json(self.state / 'relay.json'))
 
     def test_unread_implementer_mail_alone_is_overridden_after_the_wait(self):
         # #44: the backstop applies the same rule as the relay.
         self.relay_gone()
-        box = self.checkout / '.workbench' / 'inbox' / 'codex'
+        box = self.checkout / '.wagflow' / 'inbox' / 'codex'
         box.mkdir(parents=True)
         (box / 'm1.md').write_text('---\nid: m1\nfrom: claude\nto: codex\nsubject: x\n---\nx\n', encoding='utf-8')
         self.run_for(900 + closer.CLOSE_WAIT - 60)
@@ -1696,8 +1696,8 @@ class CloseBackstop(unittest.TestCase):
         peers = [relay.Peer('claude', 'claude', self.PLANNER), relay.Peer('codex', 'claude', self.IMPLEMENTER)]
         with patch.dict(os.environ), patch.object(relay, 'now', lambda: clock['t']), \
                 patch.object(relay, 'pause', lambda s: clock.update(t=clock['t'] + max(s, 1))), \
-                patch.object(q.agw, 'my_pane', return_value='relay-7'):
-            r = relay.Relay(self.checkout / '.workbench', peers, 'o/r', 'issue-7-fix', 5, 60)
+                patch.object(q.wag, 'my_pane', return_value='relay-7'):
+            r = relay.Relay(self.checkout / '.wagflow', peers, 'o/r', 'issue-7-fix', 5, 60)
             r.log = lambda text: None
             r.close_after_merge(42)
         hub.reload_paths()
@@ -1729,7 +1729,7 @@ class CloseBackstop(unittest.TestCase):
         import relay
         q.atomic_json(self.state / 'queue-member.json', {'queue': str(self.store.path), 'repo': 'o/r', 'number': 7})
         with patch.dict(os.environ):
-            r = relay.Relay(self.checkout / '.workbench', [], 'o/r', 'issue-7-fix', 5, 60)
+            r = relay.Relay(self.checkout / '.wagflow', [], 'o/r', 'issue-7-fix', 5, 60)
         hub.reload_paths()
         return r
 
@@ -1820,7 +1820,7 @@ class CloseBackstop(unittest.TestCase):
     def test_an_unreadable_tree_closes_nothing(self):
         self.w.close_backstop()                                  # starts the 15-minute clock
         self.now += 1000
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('no pipe')):
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('no pipe')):
             self.w.close_backstop()
         self.assertEqual([], self.actions)
         self.assertIn('close #7', self.w.errors)
@@ -1959,7 +1959,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         return [n for n, _, _ in self.launches]
 
     def relay_episode(self, n, tool='codex', kind='warning', box='codex'):
-        path = Path(self.member(n)['checkout']) / '.workbench/state/relay.json'
+        path = Path(self.member(n)['checkout']) / '.wagflow/state/relay.json'
         q.atomic_json(path, {'limits': {box: {'kind': kind, 'tool': tool, 'line': 'Approaching rate limits',
                                               'firstSeen': datetime.now(timezone.utc).isoformat(timespec='seconds'),
                                               'announced': True}}})
@@ -1992,7 +1992,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         for n in (1, 2):
             self.report(n, 'blocked', reason='codex limited', cause='environment')
         w.tick()
-        self.sessions = set()                       # agwinterm restarting: one read lists nothing
+        self.sessions = set()                       # wagterm restarting: one read lists nothing
         w.tick()
         self.assertEqual([1, 2], self.launched())
         self.assertFalse(any(self.member(n)['slotReleased'] for n in (1, 2)))
@@ -2087,7 +2087,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         self.report(1, 'resumed')
         w.tick()
         self.assertTrue(self.member(1)['resumed'])
-        self.sessions = set()                         # agwinterm restarting: the tree misses it once
+        self.sessions = set()                         # wagterm restarting: the tree misses it once
         w.tick()
         self.assertFalse(self.member(1)['slotReleased'])
         self.sessions = {1}
@@ -2171,7 +2171,7 @@ class EnvironmentalBlocks(unittest.TestCase):
                 m.update(state='pr-open', phase='pr-open', slotReleased=True, attempt=1, token=str(uuid.uuid4()))
             data['members'][0]['state'] = 'blocked'
             data['members'][0]['slotReleased'] = True
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('no pipe')):
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('no pipe')):
             w.tick()
         self.assertEqual([1], self.launched())
         self.assertFalse(any('sessionGoneSince' in m for m in self.store.load()['members']))   # nothing stamped
@@ -2192,7 +2192,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         self.sessions = {1, 2, 3}
         w.tick()
         self.assertEqual([], self.launched())
-        self.sessions = set()                       # agwinterm restarting
+        self.sessions = set()                       # wagterm restarting
         w.tick()
         self.assertEqual([], self.launched())
         self.sessions = {1, 2, 3}                   # back: the stamps go
@@ -2221,7 +2221,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         self.now += q.SESSION_GRACE
         w.tick()
         self.assertTrue(self.member(1)['slotReleased'])
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('no pipe')):
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('no pipe')):
             w.tick()
         self.assertTrue(self.member(1)['slotReleased'])
         self.assertEqual(stamp, self.member(1)['sessionGoneSince'])
@@ -2235,7 +2235,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         self.sessions = {1}
         self.relay_episode(1)
         self.report(1, 'blocked', reason='chooser')
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('no pipe')):
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('no pipe')):
             w.tick()
         self.assertFalse(self.member(1)['slotReleased'])
         self.assertEqual([1], self.launched())
@@ -2276,7 +2276,7 @@ class EnvironmentalBlocks(unittest.TestCase):
         self.report(1, 'blocked', reason='chooser')
         w.tick()
         self.assertFalse(self.member(1)['slotReleased'])
-        (Path(self.member(1)['checkout']) / '.workbench/state/relay.json').write_text('{broken', encoding='utf-8')
+        (Path(self.member(1)['checkout']) / '.wagflow/state/relay.json').write_text('{broken', encoding='utf-8')
         w.tick()
         self.assertFalse(self.member(1)['slotReleased'])
         self.assertEqual([1], self.launched())
@@ -2302,7 +2302,7 @@ class LimitWait(unittest.TestCase):
         return [n for n, *_ in self.launches]
 
     def state_dir(self, n):
-        return Path(self.member(n)['checkout']) / '.workbench/state'
+        return Path(self.member(n)['checkout']) / '.wagflow/state'
 
     def relay_wait(self, n, wait=True, retry=None):
         episode = {'kind': 'limited', 'tool': 'kimi', 'line': 'Error: 403 5-hour usage limit',
@@ -2433,7 +2433,7 @@ class ToolLimits(unittest.TestCase):
 
     def record(self, n, tool='codex', at=None, kind='warning', relay=False):
         at = datetime.now(timezone.utc) if at is None else at
-        state = Path(self.member(n)['checkout']) / '.workbench/state'
+        state = Path(self.member(n)['checkout']) / '.wagflow/state'
         if relay:
             q.atomic_json(state / 'relay.json', {'limits': {'codex': {
                 'kind': kind, 'tool': tool, 'line': f'{tool} {kind}', 'firstSeen': at.isoformat(timespec='seconds'),
@@ -2595,7 +2595,7 @@ class ToolLimits(unittest.TestCase):
     def test_a_transient_read_error_does_not_alert(self):
         # r1 m1: the error count resets on success, and each operation has its own key.
         self.report(1, 'blocked', reason='x')
-        path = Path(self.member(1)['checkout']) / '.workbench/state/relay.json'
+        path = Path(self.member(1)['checkout']) / '.wagflow/state/relay.json'
         for broken in (True, False, True, True):
             path.write_text('{broken' if broken else '{}', encoding='utf-8')
             self.w.tick()
@@ -2782,7 +2782,7 @@ class LaunchBackoff(unittest.TestCase):
         self.failures = 0
         self.w.tick()
         member = self.member(1)
-        record = Path(member['checkout']) / '.workbench/state/queue-launch.json'
+        record = Path(member['checkout']) / '.wagflow/state/queue-launch.json'
         session = str(uuid.uuid4())
         q.atomic_json(record, dict(attempt=member['attempt'], token=member['token'], sessions=[session]))
         job = self.w.jobs[1]['process']
@@ -2792,11 +2792,11 @@ class LaunchBackoff(unittest.TestCase):
         with self.store.transaction() as data:
             data['members'][0]['result'] = None
         self.now += 601
-        with patch.object(q.agw, 'tree', side_effect=[
+        with patch.object(q.wag, 'tree', side_effect=[
                 {'workspaces': [{'sessions': [{'id': session}]}]},
                 {'workspaces': [{'sessions': []}]}]), \
-             patch.object(q.agw, 'clear_restore') as clear, \
-             patch.object(q.agw, 'close_session') as close, \
+             patch.object(q.wag, 'clear_restore') as clear, \
+             patch.object(q.wag, 'close_session') as close, \
              patch.object(q.subprocess, 'run'), patch.object(q.shutil, 'which', return_value='gh'):
             self.w.tick()
         clear.assert_called_once_with(session)
@@ -2822,12 +2822,12 @@ class LaunchBackoff(unittest.TestCase):
         with self.store.transaction() as data:
             data['members'][0].update(state='launching', attempt=1, token=token,
                                       startedAt=self.now - 700, slotReleased=False)
-        record = Path(self.member(1)['checkout']) / '.workbench/state/queue-launch.json'
+        record = Path(self.member(1)['checkout']) / '.wagflow/state/queue-launch.json'
         q.atomic_json(record, dict(attempt=1, token=token, sessions=[session]))
-        with patch.object(q.agw, 'tree', side_effect=[
+        with patch.object(q.wag, 'tree', side_effect=[
                 {'workspaces': [{'sessions': [{'id': session}]}]},
                 {'workspaces': [{'sessions': []}]}]), \
-             patch.object(q.agw, 'clear_restore'), patch.object(q.agw, 'close_session') as close:
+             patch.object(q.wag, 'clear_restore'), patch.object(q.wag, 'close_session') as close:
             self.w.tick()
         close.assert_called_once_with(session)
         self.assertEqual('pending', self.member(1)['state'])
@@ -2841,7 +2841,7 @@ class LaunchBackoff(unittest.TestCase):
             data['launchBackoff'] = dict(member=1, failures=1, until=self.now + 1, reason='prior pane failure')
             data['members'][0].update(state='launching', attempt=1, token=token,
                                       startedAt=self.now - 1801, slotReleased=False)
-        record = Path(self.member(1)['checkout']) / '.workbench/state/queue-launch.json'
+        record = Path(self.member(1)['checkout']) / '.wagflow/state/queue-launch.json'
         q.atomic_json(record, dict(attempt=1, token=token, sessions=[str(uuid.uuid4())]))
         with patch.object(q, 'file_locked', return_value=True), patch.object(self.w, 'cleanup_launch') as cleanup:
             self.w.tick()
@@ -3190,7 +3190,7 @@ class LabelQuery(unittest.TestCase):
         self.assertFalse(self.store.path.exists())
 
     def test_members_go_through_the_usual_skip_rules(self):
-        self.in_hand.return_value = {5: 'session: a live workbench session is open for it'}
+        self.in_hand.return_value = {5: 'session: a live WagFlow session is open for it'}
         self.query('where: bug AND priority IN [P0, P1]', repo='o/r')
         self.assertEqual([2, 3], [m['number'] for m in self.store.load()['members']])
         self.in_hand.assert_called_once()
@@ -3223,7 +3223,7 @@ class LabelQuery(unittest.TestCase):
         self.launches = []
         self.pages[1].append(listed(12, '2026-02-01', 'bug', 'priority:P0'))
         self.now += 400
-        with patch.dict(os.environ, {'AGWORKBENCH_QUEUE_SPEC': 'where: nonsense ((('}):   # never read by the rescan
+        with patch.dict(os.environ, {'WAGFLOW_QUEUE_SPEC': 'where: nonsense ((('}):   # never read by the rescan
             worker.refresh_remote()
         self.assertIn(12, [m['number'] for m in self.store.load()['members']])
 
@@ -3274,10 +3274,10 @@ class LabelQuery(unittest.TestCase):
 
     def test_the_spec_can_come_from_the_environment(self):
         with patch.object(q, 'start_queue', return_value=0) as start:
-            with patch.dict(os.environ, {'AGWORKBENCH_QUEUE_SPEC': 'where: NOT "needs design" & x'}):
+            with patch.dict(os.environ, {'WAGFLOW_QUEUE_SPEC': 'where: NOT "needs design" & x'}):
                 self.assertEqual(0, q.main(['start', '--spec-env', '--repo', 'o/r']))
             self.assertEqual('where: NOT "needs design" & x', start.call_args.args[0])
-            with patch.dict(os.environ, {'AGWORKBENCH_QUEUE_SPEC': '  '}), contextlib.redirect_stderr(io.StringIO()):
+            with patch.dict(os.environ, {'WAGFLOW_QUEUE_SPEC': '  '}), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(2, q.main(['start', '--spec-env']))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             q.main(['start', '--spec', 'bugs', '--spec-env'])
@@ -3415,10 +3415,10 @@ class Specs(unittest.TestCase):
             q.resolve_spec('label:work', 'o/r', lambda *a: (_ for _ in ()).throw(OSError('API unavailable')))
 
     def test_terminal_cli_fallback_preserves_creation_and_pin_arguments(self):
-        args = q.agw._cli_args(dict(cmd='session.new', args={'name': '#queue o/r', 'command': "& 'python' 'a b'", 'no-select': True}))
+        args = q.wag._cli_args(dict(cmd='session.new', args={'name': '#queue o/r', 'command': "& 'python' 'a b'", 'no-select': True}))
         self.assertEqual(['session', 'new', '--name', '#queue o/r', '--command', "& 'python' 'a b'", '--no-select'], args)
         self.assertEqual(['session', 'restore', 'command', '--target', 'pane'],
-                         q.agw._cli_args(dict(cmd='session.restore', target='pane', args={'command': 'command'})))
+                         q.wag._cli_args(dict(cmd='session.restore', target='pane', args={'command': 'command'})))
 
 
 class NamedQueues(unittest.TestCase):
@@ -3434,7 +3434,7 @@ class NamedQueues(unittest.TestCase):
         self.kimi = q.Store(self.queues / 'o/r.kimi.json')
 
     def start(self, spec='o/r#1,2,3', **kwargs):
-        with patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             return QueueCase.start(self, spec, **kwargs)
 
     def numbers(self, store):
@@ -3454,7 +3454,7 @@ class NamedQueues(unittest.TestCase):
                          [(a['name'], a['workspace-name'], a['create-workspace']) for a in new])
         self.assertEqual(['session', 'new', '--name', '#queue o/r (kimi)', '--workspace-name', 'r-kimi',
                           '--create-workspace'],
-                         q.agw._cli_args(dict(cmd='session.new', args={k: new[0][k] for k in
+                         q.wag._cli_args(dict(cmd='session.new', args={k: new[0][k] for k in
                                                                         ('name', 'workspace-name', 'create-workspace')})))
         self.start('o/r#2')                                       # the main queue: unchanged
         main = self.store.load()
@@ -3578,8 +3578,8 @@ class NamedQueues(unittest.TestCase):
         self.start('o/r#1,2')                        # #2's issue session is in r, not in the kimi workspace
         self.assertEqual([2], self.numbers(self.store))
         self.assertIn('#1 skipped: claimed by queue kimi', self.output())
-        with patch.object(q.agw, 'tree', side_effect=q.agw.CtlError('agwinterm is not running')):
-            with self.assertRaises(q.agw.CtlError):       # an unread terminal is never "unclaimed"
+        with patch.object(q.wag, 'tree', side_effect=q.wag.CtlError('WagTerm is not running')):
+            with self.assertRaises(q.wag.CtlError):       # an unread terminal is never "unclaimed"
                 q.start_queue('o/r#1', root=self.queues, name='gpt')
         self.assertFalse(q.queue_path(self.queues, 'o/r', 'gpt').exists())
 
@@ -3593,7 +3593,7 @@ class NamedQueues(unittest.TestCase):
             data['members'] = []
         self.tree = {'workspaces': [{'name': 'r-kimi', 'sessions': [{'id': 's1', 'name': '#1 fix'}]}]}
         worker = q.Worker(self.store, self.store.load()['owner']['token'], gh=self.fake_gh, clock=lambda: self.now)
-        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             worker.refresh_remote()
         self.assertEqual('claimed by queue kimi', worker.last_skips[1])
         self.assertNotIn(1, self.numbers(self.store))
@@ -3602,7 +3602,7 @@ class NamedQueues(unittest.TestCase):
         # r1 m4: the main queue's member's own checkout is not something the kimi queue should tell
         # the human to resume or delete.
         self.start_bugs('o/r#4')
-        q.atomic_json(self.root / 'clones/r-issue-4/.workbench/state/queue-member.json',
+        q.atomic_json(self.root / 'clones/r-issue-4/.wagflow/state/queue-member.json',
                       {'queue': str(self.store.path), 'repo': 'o/r', 'number': 4})
         self.start_bugs('bugs', name='kimi', watch=True)
         out = self.output()
@@ -3611,20 +3611,20 @@ class NamedQueues(unittest.TestCase):
         with self.kimi.transaction() as data:
             data['members'] = []
         worker = q.Worker(self.kimi, self.kimi.load()['owner']['token'], gh=self.fake_gh, clock=lambda: self.now)
-        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             worker.refresh_remote()
         self.assertEqual('claimed by queue main', worker.last_skips[4])
 
     def test_a_named_checkout_without_this_queues_membership_is_to_be_deleted(self):
         # r2 m3: the skip fires exactly when no membership makes the checkout resumable.
-        (self.root / 'clones/r-kimi-issue-3/.workbench/state').mkdir(parents=True)
+        (self.root / 'clones/r-kimi-issue-3/.wagflow/state').mkdir(parents=True)
         self.start_bugs('bugs', name='kimi')
         self.assertIn('(kimi) #3 skipped: checkout exists without a queue membership this queue can use', self.output())
-        self.assertIn('delete it (a member of this queue is relaunched with github-workbench -Queue <spec> '
+        self.assertIn('delete it (a member of this queue is relaunched with wagflow -Queue <spec> '
                       '-QueueName kimi -Retry)', self.output())
-        (self.root / 'clones/r-issue-3/.workbench/state').mkdir(parents=True)
+        (self.root / 'clones/r-issue-3/.wagflow/state').mkdir(parents=True)
         self.start_bugs('bugs')                       # kimi claims 1, 2, 4, 5; #3 is the main queue's to judge
-        self.assertIn('resume with github-workbench o/r#3 or delete it', self.output())
+        self.assertIn('resume with wagflow o/r#3 or delete it', self.output())
 
     def test_a_default_workspace_too_long_to_load_is_refused_before_writing(self):
         # r1 m5: `<repo>-<name>` can exceed a workspace name's 64 characters.
@@ -3646,7 +3646,7 @@ class NamedQueues(unittest.TestCase):
 
         def second():
             try:
-                with patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+                with patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
                     q.start_queue('o/r#1', root=self.queues, name='kimi')
             except BaseException as err:        # noqa: BLE001 - reported below
                 errors.append(err)
@@ -3679,7 +3679,7 @@ class NamedQueues(unittest.TestCase):
         with self.kimi.transaction() as data:
             data['members'] = []
         worker = q.Worker(self.kimi, self.kimi.load()['owner']['token'], gh=self.fake_gh, clock=lambda: self.now)
-        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             worker.refresh_remote()
         self.assertEqual([1, 3, 4, 5], self.numbers(self.kimi))
         self.assertIn('(kimi) #2 skipped: claimed by queue main', self.output())
@@ -3687,7 +3687,7 @@ class NamedQueues(unittest.TestCase):
         with self.kimi.transaction() as data:
             data['members'] = []
         worker.next_scan = 0
-        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q, 'gh_json', self.fake_gh), patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             worker.refresh_remote()
         self.assertEqual([], self.numbers(self.kimi))
         self.assertIn('label scan', worker.errors)
@@ -3699,7 +3699,7 @@ class NamedQueues(unittest.TestCase):
         self.tree = {'workspaces': [{'name': 'R-Kimi', 'sessions': [{'id': 's1', 'name': '#1 fix'}]},
                                     {'name': 'r', 'sessions': [{'id': 's2', 'name': '#2 fix'}]},
                                     {'name': 'other', 'sessions': [{'id': 's3', 'name': '#3 fix'}]}]}
-        foreign = self.root / 'clones' / 'r-issue-4' / '.workbench' / 'state'
+        foreign = self.root / 'clones' / 'r-issue-4' / '.wagflow' / 'state'
         foreign.mkdir(parents=True)
         self.start_bugs('bugs', name='kimi')
         self.assertEqual([9, 3, 5], self.numbers(self.kimi))
@@ -3710,7 +3710,7 @@ class NamedQueues(unittest.TestCase):
         self.start_bugs('bugs')                        # the main queue sees the kimi workspace's #1 too
         self.assertEqual([], self.numbers(self.store))
         out = self.output().splitlines()
-        self.assertIn('#1 skipped: session: a live workbench session is open for it', out)
+        self.assertIn('#1 skipped: session: a live WagFlow session is open for it', out)
         self.assertIn('#3 skipped: claimed by queue kimi', out)
 
     def test_a_named_worker_counts_live_sessions_in_its_own_workspace_only(self):
@@ -3719,18 +3719,18 @@ class NamedQueues(unittest.TestCase):
         self.tree = {'workspaces': [{'name': 'r-kimi', 'sessions': [{'id': 's1', 'name': '#1 fix'}]},
                                     {'name': 'r', 'sessions': [{'id': 's2', 'name': '#2 fix'}]}]}
         (self.queues / 'o/r.json').write_text('{broken')          # a broken sibling changes nothing here
-        with patch.object(q.agw, 'tree', side_effect=lambda: self.tree):
+        with patch.object(q.wag, 'tree', side_effect=lambda: self.tree):
             self.assertEqual({1}, worker.live_numbers(self.kimi.load()))
 
     def test_status_lines_and_titles_name_the_queue(self):
         self.start('o/r#1', name='kimi')
         worker = q.Worker(self.kimi, self.kimi.load()['owner']['token'], gh=self.gh, clock=lambda: self.now)
         worker.notify('queue paused: x')
-        q.agw.notify.assert_called_with(unittest.mock.ANY, 'queue paused: x', title='Workbench queue (kimi)')
+        q.wag.notify.assert_called_with(unittest.mock.ANY, 'queue paused: x', title='WagFlow queue (kimi)')
         self.start('o/r#2')
         worker = q.Worker(self.store, self.store.load()['owner']['token'], gh=self.gh, clock=lambda: self.now)
         worker.notify('queue paused: y')
-        q.agw.notify.assert_called_with(unittest.mock.ANY, 'queue paused: y', title='Workbench queue')
+        q.wag.notify.assert_called_with(unittest.mock.ANY, 'queue paused: y', title='WagFlow queue')
 
     def test_dry_run_reports_the_name_workspace_and_claims(self):
         self.start('o/r#1')

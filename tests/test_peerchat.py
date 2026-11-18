@@ -15,7 +15,8 @@ import wag
 import peerchat
 import relay
 from frames import (CLAUDE_IDLE, CLAUDE_RUNNING, CODEX_IDLE, CODEX_QUEUED, CODEX_UNSUBMITTED,
-                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CLAUDE_SUGGESTION, CLAUDE_WRAPPED_DRAFT, TEXT, Clock, FakeWag, claude, codex, stable_frames)
+                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CODEX_MULTILINE_STATUS,
+                    CLAUDE_SUGGESTION, CLAUDE_WRAPPED_DRAFT, TEXT, Clock, FakeWag, claude, codex, stable_frames)
 
 
 
@@ -186,6 +187,55 @@ class Submission(unittest.TestCase):
         for row in (' ' * 78 + '1. Yes', ' ' * 78 + '97% context left, 1. Yes'):
             with self.subTest(row=row):
                 self.assertIsNone(peerchat.codex_composer(CODEX_0158_TYPED.rsplit('\n', 1)[0] + '\n' + row))
+
+    def test_captured_codex_multiline_status_allows_verified_submission(self):
+        self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(CODEX_MULTILINE_STATUS))
+        for footer in ('← for agents · ? for shortcuts', '? for shortcuts', '97% context left'):
+            with self.subTest(footer=footer):
+                idle = CODEX_MULTILINE_STATUS.replace('← for agents · ? for shortcuts', footer)
+                typed = idle.replace('Ask Codex to do anything', TEXT[:70] + '\n  ' + TEXT[70:])
+                fake = FakeWag(frames=stable_frames(idle, typed, idle))
+                self.assertEqual('submitted', self.send(fake))
+                self.assertEqual([TEXT, '\t'], fake.keys)
+
+    def test_multiline_status_keeps_drafts_and_shell_mode_refused(self):
+        for content in ('an unsent draft', 'an unsent draft\n  wrapped continuation'):
+            with self.subTest(content=content):
+                frame = CODEX_MULTILINE_STATUS.replace('Ask Codex to do anything', content)
+                self.assertEqual(content.replace('\n  ', ' '), peerchat.codex_composer(frame))
+                fake = FakeWag(frames=[frame])
+                with self.environment(fake), self.assertRaisesRegex(peerchat.Refused, 'not empty'):
+                    peerchat.precheck('pane', peerchat.PROFILES['codex'])
+                self.assertEqual([], fake.keys)
+        self.assertIsNone(peerchat.codex_composer(CODEX_MULTILINE_STATUS.replace('› ', '! ', 1)))
+
+    def test_multiline_status_rejects_unknown_or_incomplete_footer_blocks(self):
+        for frame in [
+                CODEX_MULTILINE_STATUS.replace('GPT-6.1-Sol high', 'Unknown overlay'),
+                CODEX_MULTILINE_STATUS.replace('Main [default]', 'Approve this command?'),
+                CODEX_MULTILINE_STATUS.replace('  29K out', '  1. Yes\n  29K out'),
+                CODEX_MULTILINE_STATUS.replace('← for agents · ? for shortcuts', 'Choose a command'),
+                CODEX_MULTILINE_STATUS + '\n  Approve this command?',
+                CODEX_MULTILINE_STATUS.rsplit('\n', 1)[0]]:
+            with self.subTest(frame=frame):
+                self.assertIsNone(peerchat.codex_composer(frame))
+                fake = FakeWag(frames=[frame])
+                with self.environment(fake), self.assertRaises(peerchat.Refused):
+                    peerchat.precheck('pane', peerchat.PROFILES['codex'])
+                self.assertEqual([], fake.keys)
+
+    def test_multiline_status_does_not_hide_a_dialog_or_redraw(self):
+        for frame in [CODEX_MULTILINE_STATUS + '\n› 1. Yes',
+                      CODEX_MULTILINE_STATUS.replace('› Ask', '› 1. Yes\n› Ask')]:
+            fake = FakeWag(frames=[frame])
+            with self.environment(fake), self.assertRaises(peerchat.Refused):
+                peerchat.precheck('pane', peerchat.PROFILES['codex'])
+            self.assertEqual([], fake.keys)
+        draft = CODEX_MULTILINE_STATUS.replace('Ask Codex to do anything', 'new draft')
+        fake = FakeWag(frames=[CODEX_MULTILINE_STATUS, draft])
+        with self.environment(fake), self.assertRaisesRegex(peerchat.Refused, 'changed'):
+            peerchat.precheck('pane', peerchat.PROFILES['codex'])
+        self.assertEqual([], fake.keys)
 
     def test_dialog_and_disappearance_after_submit_withhold_further_keys(self):
         for frame, reason in [(codex(TEXT) + '\n› 1. Yes', 'dialog'), ('─' * 50, 'disappeared')]:

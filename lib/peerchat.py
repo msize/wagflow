@@ -78,12 +78,21 @@ CODEX_SHELL_PROMPT_RE = re.compile(r"^![\s ]*(.*?)\s*$")
 # is also how the footer and an overlay row are drawn - the difference is only that a continuation
 # follows the prompt row inside the same block.
 CODEX_CONT_RE = re.compile(r"^ {2}\s*(\S.*?)\s*$")
-# Codex indents its footer rows by two spaces. Only the final row is stripped: a multi-row overlay
-# and an indented modal choice have the same shape, so the guard fails closed on both.
+# Codex indents its footer rows by two spaces. Only the final footer row is stripped generically.
+# One further blank-separated status block is stripped only under a known shortcuts/context footer
+# and a full CODEX_STATUS_RE boundary match (see trailing_block). Unknown overlays fail closed.
 FOOTER_RE = re.compile(r"^ {2}\S")
 # Once its composer holds text, Codex 0.158 replaces `? for shortcuts` with this row, pushed to the
 # right edge of the pane - far more than two spaces in.
 CONTEXT_FOOTER_RE = re.compile(r"^\s{2,}\d{1,3}% context left\s*$")
+# Modern Codex can wrap its configured status line above the shortcuts footer. Require
+# the captured model/effort and agent/mode boundaries instead of discarding arbitrary
+# indented rows, which might be a draft continuation or a modal choice list.
+CODEX_STATUS_RE = re.compile(
+    r"^(?:gpt|GPT)-[A-Za-z0-9_.:-]+ (?:minimal|low|medium|high|xhigh|ultra|max) · "
+    r".+ · [A-Za-z][A-Za-z0-9 _-]* \[[A-Za-z][A-Za-z0-9_-]*\]$")
+CODEX_SHORTCUTS = frozenset(('? for shortcuts', '← for agents · ? for shortcuts'))
+NUMBERED_ROW_RE = re.compile(r"^\s*\d+\.\s+\S")
 # A highlighted chooser row - a permission prompt, a trust dialog, a picker. Kimi Code marks its
 # approval choice with `▶`.
 CHOOSER_RE = re.compile(r"^\s*[>❯›▶]\s+\d+\.\s+\S")
@@ -227,10 +236,11 @@ def queued_for(text: str, typed: str) -> bool:
 # --- reading the composer -------------------------------------------------------------------
 
 def trailing_block(text: str) -> list[str]:
-    """The last non-blank block of the pane, with one trailing footer row stripped."""
+    """The last non-blank block, stripping a footer row and a recognized Codex status block."""
     lines = text.splitlines()[-BOX_LINES:]
     while lines and not lines[-1].strip():
         lines.pop()
+    known_footer = bool(lines and (lines[-1].strip() in CODEX_SHORTCUTS or CONTEXT_FOOTER_RE.match(lines[-1])))
     if lines and (FOOTER_RE.match(lines[-1]) or CONTEXT_FOOTER_RE.match(lines[-1])):
         lines.pop()
         while lines and not lines[-1].strip():
@@ -238,6 +248,17 @@ def trailing_block(text: str) -> list[str]:
     start = len(lines)
     while start and lines[start - 1].strip():
         start -= 1
+    status = lines[start:]
+    if (known_footer and status and all(FOOTER_RE.match(row) and not NUMBERED_ROW_RE.match(row) for row in status)
+            and CODEX_STATUS_RE.fullmatch(' '.join(row[2:] for row in status))):
+        # The blank separator above this complete status block keeps draft continuations
+        # in the composer. Strip at most one block, never scan through an unknown overlay.
+        lines = lines[:start]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        start = len(lines)
+        while start and lines[start - 1].strip():
+            start -= 1
     return lines[start:]
 
 

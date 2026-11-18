@@ -64,6 +64,15 @@ CODEX_0158_TYPED = ("• Waiting for mail.\n\n"
                     + " " * 78 + "97% context left")
 
 
+# Captured from the live Codex author pane in WagTerm on 2026-11-18. The configured
+# status line wraps, with a blank row separating it from the composer.
+CODEX_MULTILINE_STATUS = r"""› Ask Codex to do anything
+
+  GPT-6.1-Sol high · C:\Projects\my\wagterm · master · Context 43% used · 211K used · 8.47M in ·
+  29K out · 01a1ee24-f330-74e0-b958-14942a99e30a · Main [default]
+  ← for agents · ? for shortcuts"""
+
+
 TEXT = (r"Chat from Workbench: workbench mail from claude: plan v1 for #50 (step 1: "
         r"projcore::editor) [id 20260922T193916Z-claude-1528] - read it with: python C:\Users\boris\source\agworkbench\lib\agmsg.py "
         r"read 20260922T193916Z-claude-1528 (AI_HUB=C:\Users\boris\source\workbench\docxy-issue-50\.workbench)")

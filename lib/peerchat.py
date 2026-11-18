@@ -58,7 +58,12 @@ BOX_LINES = 40           # how much of the pane bottom is read as the composer r
 RETRY_ATTEMPTS = 5       # pre-write refusals only
 RETRY_DELAY = 10.0
 SETTLE = 0.35            # let the TUI redraw before reading it back
-VERIFY_TIMEOUT = 3.0
+VERIFY_TIMEOUT = 3.0     # base wait for typed text to show up in the composer
+# Codex 0.170 on Windows takes typed text as a burst and draws it late, longer for longer text:
+# a 228-char pointer appeared 1.7-3.4 s after typing, 804 chars after 5.8 s, and a busy author pane
+# overran a flat 3 s. See verify_timeout().
+VERIFY_PER_CHAR = 0.015
+VERIFY_STABLE = 0.5      # how long a clipped match must hold before it authorizes the submit key
 SUBMIT_TIMEOUT = 5.0
 SUBMIT_RETRIES = 2
 MAX_TYPED = 1200         # longer than this belongs in the inbox, not in a composer
@@ -86,11 +91,15 @@ FOOTER_RE = re.compile(r"^ {2}\S")
 # right edge of the pane - far more than two spaces in.
 CONTEXT_FOOTER_RE = re.compile(r"^\s{2,}\d{1,3}% context left\s*$")
 # Modern Codex can wrap its configured status line above the shortcuts footer. Require
-# the captured model/effort and agent/mode boundaries instead of discarding arbitrary
-# indented rows, which might be a draft continuation or a modal choice list.
+# the captured model/effort and last-item boundaries instead of discarding arbitrary
+# indented rows, which might be a draft continuation or a modal choice list. Only the
+# boundaries are checked; the middle items vary with the status-line config. Codex 0.170
+# ends the line with the agent and mode (`Main [default]`) or, in a session without
+# them, with the thread id.
 CODEX_STATUS_RE = re.compile(
-    r"^(?:gpt|GPT)-[A-Za-z0-9_.:-]+ (?:minimal|low|medium|high|xhigh|ultra|max) · "
-    r".+ · [A-Za-z][A-Za-z0-9 _-]* \[[A-Za-z][A-Za-z0-9_-]*\]$")
+    r"^(?:gpt|GPT)-[A-Za-z0-9_.:-]+ (?:minimal|low|medium|high|xhigh|ultra|max) · .+ · "
+    r"(?:[A-Za-z][A-Za-z0-9 _-]* \[[A-Za-z][A-Za-z0-9_-]*\]"
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 CODEX_SHORTCUTS = frozenset(('? for shortcuts', '← for agents · ? for shortcuts'))
 NUMBERED_ROW_RE = re.compile(r"^\s*\d+\.\s+\S")
 # A highlighted chooser row - a permission prompt, a trust dialog, a picker. Kimi Code marks its
@@ -526,14 +535,23 @@ def precheck(pane: str, profile: Profile) -> None:
         raise Refused(f"composer holds a draft: {content[:60]!r}")
 
 
+def verify_timeout(typed: str) -> float:
+    """How long verify_typed waits for the typed text: 3 s plus 15 ms per character."""
+    return VERIFY_TIMEOUT + VERIFY_PER_CHAR * len(typed)
+
+
 def verify_typed(pane: str, profile: Profile, typed: str) -> None:
     """Check ownership before the first key, including every visible wrapped row.
 
     A clipped head, tail or both is allowed; a different or extended draft must not be submitted.
     This verifies visible placement, not that every character was rendered or mail was read.
     """
-    deadline = now() + VERIFY_TIMEOUT
+    deadline = now() + verify_timeout(typed)
     seen = ""
+    # A clipped match may be the head of a burst Codex is still drawing: accept it only once it
+    # has held for VERIFY_STABLE. The complete text is final and is accepted at once.
+    partial: str | None = None
+    since = 0.0
     while True:
         text = wag.pane_text(pane)
         # Re-checked here, not only in precheck: a dialog can appear between the two, and this is
@@ -547,13 +565,23 @@ def verify_typed(pane: str, profile: Profile, typed: str) -> None:
         content, state, _ = composer_state(pane, profile, text)
         if state == 'dialog':
             raise Failed('a chooser or approval dialog appeared while verifying typed text; submit withheld')
+        matched = None
         if content is not None:
             seen = content
             if state != 'changing' and owns(content, typed):
-                return
+                if compact(content) == compact(typed):
+                    return
+                matched = content
             if state not in {'empty', 'ambiguous', 'changing'} and compact(content) not in compact(typed):
                 raise Failed(f"composer holds something other than the attempted pointer: {content!r}; submit withheld")
-        if now() >= deadline:
+        if matched is None:
+            partial = None
+        elif matched != partial:
+            partial, since = matched, now()
+        elif now() - since >= VERIFY_STABLE:
+            return
+        # A clipped match first seen near the deadline still gets its stability window.
+        if now() >= deadline and (partial is None or now() >= deadline + VERIFY_STABLE):
             break
         pause(0.25)
     raise Failed(

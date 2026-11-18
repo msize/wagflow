@@ -72,6 +72,13 @@ CODEX_MULTILINE_STATUS = r"""› Ask Codex to do anything
   29K out · 01a1ee24-f330-74e0-b958-14942a99e30a · Main [default]
   ← for agents · ? for shortcuts"""
 
+# Captured from a fresh Codex 0.170 session in WagTerm on 2026-11-18: the status line ends with
+# the thread id, and the shortcuts footer is gone once the composer holds text.
+CODEX_THREAD_STATUS = r"""› Ask Codex to do anything
+
+  GPT-6.1-Sol high · C:\Projects\my\wagterm · master · Context 0% used · 0 in · 0 out · 01a1eee7-9789-7993-b57d-38256549f2d3
+  ← for agents · ? for shortcuts"""
+
 
 TEXT = (r"Chat from Workbench: workbench mail from claude: plan v1 for #50 (step 1: "
         r"projcore::editor) [id 20260922T193916Z-claude-1528] - read it with: python C:\Users\boris\source\agworkbench\lib\agmsg.py "

@@ -15,7 +15,7 @@ import wag
 import peerchat
 import relay
 from frames import (CLAUDE_IDLE, CLAUDE_RUNNING, CODEX_IDLE, CODEX_QUEUED, CODEX_UNSUBMITTED,
-                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CODEX_MULTILINE_STATUS,
+                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CODEX_MULTILINE_STATUS, CODEX_THREAD_STATUS,
                     CLAUDE_SUGGESTION, CLAUDE_WRAPPED_DRAFT, TEXT, Clock, FakeWag, claude, codex, stable_frames)
 
 
@@ -149,9 +149,33 @@ class Submission(unittest.TestCase):
                  (TEXT, TEXT[marker_start:marker_end + 10])]
         for text, rendered in cases:
             with self.subTest(rendered=rendered):
-                fake = FakeWag(frames=stable_frames(CODEX_IDLE, codex(rendered), CODEX_IDLE))
+                # A clipped match must hold for VERIFY_STABLE: three polls of two reads each.
+                reads = 2 if peerchat.compact(rendered) == peerchat.compact(text) else 6
+                fake = FakeWag(frames=[CODEX_IDLE] * 2 + [codex(rendered)] * reads + [CODEX_IDLE] * 2)
                 self.assertEqual('submitted', self.send(fake, text))
                 self.assertEqual([text, '\t'], fake.keys)
+
+    def test_clipped_match_must_hold_before_the_submit_key(self):
+        clipped = TEXT[:TEXT.index(']') + 1]
+        self.assertTrue(peerchat.owns(clipped, TEXT))
+        fake = FakeWag(frames=stable_frames(CODEX_IDLE, codex(clipped), codex(TEXT + ' extra')))
+        with self.assertRaisesRegex(peerchat.Failed, 'other than the attempted pointer'):
+            self.send(fake)
+        self.assertEqual([TEXT], fake.keys)
+
+    def test_late_drawn_pointer_is_still_verified_and_submitted(self):
+        # Codex 0.170 drew a 224-char pointer more than 3 s after it was typed.
+        late = 2 * 16      # 16 polls, 4 s of an unchanged empty composer after typing
+        self.assertGreater(16 * 0.25, peerchat.VERIFY_TIMEOUT)
+        self.assertLess(peerchat.SETTLE + 16 * 0.25, peerchat.verify_timeout(TEXT))
+        fake = FakeWag(frames=[CODEX_IDLE] * (2 + late) + stable_frames(codex(TEXT), CODEX_IDLE))
+        self.assertEqual('submitted', self.send(fake))
+        self.assertEqual([TEXT, '\t'], fake.keys)
+
+    def test_verify_timeout_grows_with_the_typed_text(self):
+        self.assertEqual(peerchat.VERIFY_TIMEOUT, peerchat.verify_timeout(''))
+        self.assertAlmostEqual(peerchat.VERIFY_TIMEOUT + 224 * peerchat.VERIFY_PER_CHAR,
+                               peerchat.verify_timeout('x' * 224))
 
     def test_clipped_pointer_without_complete_id_never_authorizes_a_key(self):
         for visible in [TEXT[:30], TEXT[:TEXT.index('[id ')], TEXT[:TEXT.index(']')]]:
@@ -197,6 +221,20 @@ class Submission(unittest.TestCase):
                 fake = FakeWag(frames=stable_frames(idle, typed, idle))
                 self.assertEqual('submitted', self.send(fake))
                 self.assertEqual([TEXT, '\t'], fake.keys)
+
+    def test_captured_codex_thread_id_status_allows_verified_submission(self):
+        self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(CODEX_THREAD_STATUS))
+        # With text in the composer this Codex drops the shortcuts footer and keeps the status row.
+        typed = CODEX_THREAD_STATUS.replace('Ask Codex to do anything', TEXT).rsplit('\n', 1)[0]
+        fake = FakeWag(frames=stable_frames(CODEX_THREAD_STATUS, typed, CODEX_THREAD_STATUS))
+        self.assertEqual('submitted', self.send(fake))
+        self.assertEqual([TEXT, '\t'], fake.keys)
+        uuid = '01a1eee7-9789-7993-b57d-38256549f2d3'
+        for frame in [CODEX_THREAD_STATUS.replace(uuid, 'Approve this command?'),
+                      CODEX_THREAD_STATUS.replace(uuid, uuid[:-1]),
+                      CODEX_THREAD_STATUS.replace(uuid, uuid.upper())]:
+            with self.subTest(frame=frame):
+                self.assertIsNone(peerchat.codex_composer(frame))
 
     def test_multiline_status_keeps_drafts_and_shell_mode_refused(self):
         for content in ('an unsent draft', 'an unsent draft\n  wrapped continuation'):
@@ -345,7 +383,8 @@ class Submission(unittest.TestCase):
             self.send(fake)
         self.assertEqual([TEXT], fake.keys)
         self.assertGreater(fake.cursor_reads, 1)
-        self.assertAlmostEqual(peerchat.SETTLE + peerchat.VERIFY_TIMEOUT, self.clock.t)
+        self.assertGreaterEqual(self.clock.t, peerchat.SETTLE + peerchat.verify_timeout(TEXT))
+        self.assertLess(self.clock.t, peerchat.SETTLE + peerchat.verify_timeout(TEXT) + .25)
 
     def test_post_submit_ambiguity_waits_but_does_not_prove_success(self):
         for other in [CLAUDE_SUGGESTION, claude(TEXT[:30])]:

@@ -15,7 +15,9 @@ import wag
 import peerchat
 import relay
 from frames import (CLAUDE_IDLE, CLAUDE_RUNNING, CODEX_IDLE, CODEX_QUEUED, CODEX_UNSUBMITTED,
-                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CODEX_MULTILINE_STATUS, CODEX_THREAD_STATUS,
+                    CODEX_0158_IDLE, CODEX_0158_TEXT, CODEX_0158_TYPED, CODEX_MULTILINE_STATUS,
+                    CODEX_MULTILINE_STATUS_TYPED, CODEX_THREAD_STATUS,
+                    CODEX_WARNINGS_FOOTER_IDLE, CODEX_WARNINGS_FOOTER_TEXT, CODEX_WARNINGS_FOOTER_TYPED,
                     CLAUDE_SUGGESTION, CLAUDE_WRAPPED_DRAFT, TEXT, Clock, FakeWag, claude, codex, stable_frames)
 
 
@@ -28,6 +30,7 @@ class Submission(unittest.TestCase):
     def environment(self, fake):
         with patch.object(wag, 'pane_text', fake.pane_text), patch.object(wag, 'type_into', fake.type_into), \
                 patch.object(wag, 'cursor_column', fake.cursor_column), \
+                patch.object(peerchat, 'codex_cursor_in_composer', return_value=True), \
                 patch.object(wag, 'request', side_effect=AssertionError('real terminal request')), \
                 patch.object(peerchat, 'now', self.clock.now), patch.object(peerchat, 'pause', self.clock.pause):
             yield
@@ -207,10 +210,51 @@ class Submission(unittest.TestCase):
         self.assertEqual('submitted', self.send(fake, CODEX_0158_TEXT))
         self.assertEqual([CODEX_0158_TEXT, '\t'], fake.keys)
 
-    def test_only_a_context_footer_is_stripped_at_the_right_edge(self):
-        for row in (' ' * 78 + '1. Yes', ' ' * 78 + '97% context left, 1. Yes'):
+    def test_numbered_chrome_row_is_not_stripped_at_the_right_edge(self):
+        frame = CODEX_0158_TYPED.rsplit('\n', 1)[0] + '\n' + ' ' * 78 + '1. Yes'
+        self.assertIsNone(peerchat.codex_composer(frame))
+
+    def test_captured_context_footer_with_other_items_does_not_hide_the_typed_pointer(self):
+        content = peerchat.codex_composer(CODEX_WARNINGS_FOOTER_TYPED)
+        self.assertEqual(peerchat.compact(CODEX_WARNINGS_FOOTER_TEXT), peerchat.compact(content))
+        fake = FakeWag(frames=stable_frames(CODEX_IDLE, CODEX_WARNINGS_FOOTER_TYPED, CODEX_IDLE))
+        self.assertEqual('submitted', self.send(fake, CODEX_WARNINGS_FOOTER_TEXT))
+        self.assertEqual([CODEX_WARNINGS_FOOTER_TEXT, '\t'], fake.keys)
+
+    def test_context_footer_rejects_numbered_choice_rows(self):
+        head = CODEX_WARNINGS_FOOTER_TYPED.rsplit('\n', 1)[0]
+        for row in (' ' * 34 + '1. Yes · 59% context left',
+                    ' ' * 34 + '1. Yes · Main · 59% context left'):
             with self.subTest(row=row):
-                self.assertIsNone(peerchat.codex_composer(CODEX_0158_TYPED.rsplit('\n', 1)[0] + '\n' + row))
+                self.assertIsNone(peerchat.codex_composer(head + '\n' + row))
+
+    def test_context_footer_with_other_items_below_a_wrapped_status(self):
+        typed, status = CODEX_MULTILINE_STATUS_TYPED.split('\n\n')
+        footer = CODEX_WARNINGS_FOOTER_TYPED.rsplit('\n', 1)[1]
+        frame = typed + '\n\n' + status + '\n' + footer
+        self.assertEqual(peerchat.codex_composer(CODEX_MULTILINE_STATUS_TYPED), peerchat.codex_composer(frame))
+
+    def test_captured_idle_warnings_footer_allows_verified_submission(self):
+        self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(CODEX_WARNINGS_FOOTER_IDLE))
+        fake = FakeWag(frames=stable_frames(CODEX_WARNINGS_FOOTER_IDLE, CODEX_WARNINGS_FOOTER_TYPED,
+                                            CODEX_WARNINGS_FOOTER_IDLE))
+        self.assertEqual('submitted', self.send(fake, CODEX_WARNINGS_FOOTER_TEXT))
+        self.assertEqual([CODEX_WARNINGS_FOOTER_TEXT, '\t'], fake.keys)
+
+    def test_chrome_contents_do_not_determine_the_composer(self):
+        # The human approved structural parsing after the Codex source check. These rows used
+        # to fail content allowlists. Sending additionally requires the caret in the composer.
+        for chrome in ('Unknown overlay', 'Approve this command?', 'GPT-new custom status',
+                       '97% context left, 1. Yes', 'Main [default], 59% context left',
+                       '59% context left ·', '59% context left · f2 to view · 1. Yes',
+                       '59% context left · 2. No', '⚠ 2 warnings, f2 to view'):
+            with self.subTest(chrome=chrome):
+                idle = '› Ask Codex to do anything\n\n  ' + chrome
+                typed = idle.replace('Ask Codex to do anything', TEXT)
+                self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(idle))
+                fake = FakeWag(frames=stable_frames(idle, typed, idle))
+                self.assertEqual('submitted', self.send(fake))
+                self.assertEqual([TEXT, '\t'], fake.keys)
 
     def test_captured_codex_multiline_status_allows_verified_submission(self):
         self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(CODEX_MULTILINE_STATUS))
@@ -229,12 +273,43 @@ class Submission(unittest.TestCase):
         fake = FakeWag(frames=stable_frames(CODEX_THREAD_STATUS, typed, CODEX_THREAD_STATUS))
         self.assertEqual('submitted', self.send(fake))
         self.assertEqual([TEXT, '\t'], fake.keys)
-        uuid = '01a1eee7-9789-7993-b57d-38256549f2d3'
-        for frame in [CODEX_THREAD_STATUS.replace(uuid, 'Approve this command?'),
-                      CODEX_THREAD_STATUS.replace(uuid, uuid[:-1]),
-                      CODEX_THREAD_STATUS.replace(uuid, uuid.upper())]:
-            with self.subTest(frame=frame):
-                self.assertIsNone(peerchat.codex_composer(frame))
+
+    def test_captured_footerless_status_with_a_typed_pointer_is_verified(self):
+        # Codex 0.170 drops the shortcuts footer once the composer holds text, so the wrapped
+        # status block is the last block on screen.
+        self.assertEqual('Ask Codex to do anything',
+                         peerchat.codex_composer(CODEX_MULTILINE_STATUS.rsplit('\n', 1)[0]))
+        expected = ' '.join(row.strip() for row in CODEX_MULTILINE_STATUS_TYPED.splitlines()[:3])[2:]
+        self.assertEqual(expected, peerchat.codex_composer(CODEX_MULTILINE_STATUS_TYPED))
+        fake = FakeWag(frames=stable_frames(CODEX_MULTILINE_STATUS, CODEX_MULTILINE_STATUS_TYPED,
+                                            CODEX_MULTILINE_STATUS))
+        self.assertEqual('submitted', self.send(fake, expected))
+        self.assertEqual([expected, '\t'], fake.keys)
+        frame = CODEX_MULTILINE_STATUS_TYPED.replace('  · 166K out', '  1. Yes\n  · 166K out')
+        self.assertIsNone(peerchat.codex_composer(frame))
+
+    def test_footerless_status_does_not_hide_an_unknown_block(self):
+        status = CODEX_MULTILINE_STATUS_TYPED.split('\n\n')[1]
+        frame = '› Ask Codex to do anything\n\n  Approve this command?\n  1. Yes\n  2. No\n\n' + status
+        self.assertIsNone(peerchat.codex_composer(frame))
+
+    def test_footerless_wrapped_pointer_keeps_its_last_row_and_allows_submit(self):
+        prefix = '• Waiting for mail.\n\n'
+        idle = prefix + '› Ask Codex to do anything'
+        typed = prefix + CODEX_MULTILINE_STATUS_TYPED.split('\n\n')[0]
+        expected = ' '.join(row.strip() for row in typed.splitlines()[2:])[2:]
+        self.assertEqual(expected, peerchat.codex_composer(typed))
+        fake = FakeWag(frames=stable_frames(idle, typed, idle))
+        guard = peerchat.codex_cursor_in_composer
+        def snapshot(*args, **kwargs):
+            frame = typed if len(fake.keys) == 1 else idle
+            row = len(frame.splitlines()) - 1
+            return CodexCursorSnapshot.snapshot(frame, row, len(frame.splitlines()[row]) if len(fake.keys) == 1 else 2)
+        with self.environment(fake), patch.object(peerchat, 'codex_cursor_in_composer', guard), \
+                patch.object(wag, 'request', side_effect=snapshot):
+            self.assertEqual('submitted', peerchat.send_once(
+                'pane', peerchat.PROFILES['codex'], expected, dry_run=False))
+        self.assertEqual([expected, '\t'], fake.keys)
 
     def test_multiline_status_keeps_drafts_and_shell_mode_refused(self):
         for content in ('an unsent draft', 'an unsent draft\n  wrapped continuation'):
@@ -247,14 +322,27 @@ class Submission(unittest.TestCase):
                 self.assertEqual([], fake.keys)
         self.assertIsNone(peerchat.codex_composer(CODEX_MULTILINE_STATUS.replace('› ', '! ', 1)))
 
-    def test_multiline_status_rejects_unknown_or_incomplete_footer_blocks(self):
+    def test_chrome_changes_preserve_the_composer(self):
+        uuid = '01a1eee7-9789-7993-b57d-38256549f2d3'
         for frame in [
+                CODEX_THREAD_STATUS.replace(uuid, 'Approve this command?'),
+                CODEX_THREAD_STATUS.replace(uuid, uuid[:-1]),
+                CODEX_THREAD_STATUS.replace(uuid, uuid.upper()),
                 CODEX_MULTILINE_STATUS.replace('GPT-6.1-Sol high', 'Unknown overlay'),
                 CODEX_MULTILINE_STATUS.replace('Main [default]', 'Approve this command?'),
-                CODEX_MULTILINE_STATUS.replace('  29K out', '  1. Yes\n  29K out'),
                 CODEX_MULTILINE_STATUS.replace('← for agents · ? for shortcuts', 'Choose a command'),
                 CODEX_MULTILINE_STATUS + '\n  Approve this command?',
-                CODEX_MULTILINE_STATUS.rsplit('\n', 1)[0]]:
+                CODEX_MULTILINE_STATUS.rsplit('\n', 1)[0].replace(' · Main [default]', ' ·')]:
+            with self.subTest(frame=frame):
+                self.assertEqual('Ask Codex to do anything', peerchat.codex_composer(frame))
+
+    def test_chrome_is_bounded_and_never_contains_choice_or_prompt_rows(self):
+        head = '› Ask Codex to do anything\n\n'
+        self.assertEqual('Ask Codex to do anything',
+                         peerchat.codex_composer(head + '\n'.join(['  status'] * 6)))
+        for frame in [CODEX_MULTILINE_STATUS.replace('  29K out', '  1. Yes\n  29K out'),
+                      head + '\n'.join(['  status'] * 7), head + '  › 1. Yes', head + '! shell',
+                      head + '  ! shell', head + '  › another prompt']:
             with self.subTest(frame=frame):
                 self.assertIsNone(peerchat.codex_composer(frame))
                 fake = FakeWag(frames=[frame])
@@ -415,6 +503,44 @@ class Submission(unittest.TestCase):
         self.assertEqual(0, fake.cursor_reads)
         self.assertEqual([], fake.keys)
 
+    def test_codex_cursor_outside_composer_withholds_typing(self):
+        fake = FakeWag(frames=[CODEX_WARNINGS_FOOTER_IDLE])
+        with self.environment(fake), patch.object(peerchat, 'codex_cursor_in_composer', return_value=False):
+            with self.assertRaisesRegex(peerchat.Refused, 'composer visible but caret not in it'):
+                peerchat.precheck('pane', peerchat.PROFILES['codex'])
+        self.assertEqual([], fake.keys)
+
+    def test_codex_cursor_leaving_composer_after_typing_withholds_submit(self):
+        fake = FakeWag(frames=stable_frames(CODEX_WARNINGS_FOOTER_IDLE, CODEX_WARNINGS_FOOTER_TYPED))
+        with self.environment(fake), patch.object(peerchat, 'codex_cursor_in_composer',
+                side_effect=lambda pane, content: content == 'Ask Codex to do anything'):
+            with self.assertRaisesRegex(peerchat.Failed, 'submit withheld'):
+                peerchat.send_once('pane', peerchat.PROFILES['codex'], CODEX_WARNINGS_FOOTER_TEXT, dry_run=False)
+        self.assertEqual([CODEX_WARNINGS_FOOTER_TEXT], fake.keys)
+
+    def test_codex_empty_composer_after_submit_proves_delivery_when_caret_leaves(self):
+        fake = FakeWag(frames=stable_frames(CODEX_WARNINGS_FOOTER_IDLE, CODEX_WARNINGS_FOOTER_TYPED,
+                                            CODEX_WARNINGS_FOOTER_IDLE))
+        with self.environment(fake), patch.object(peerchat, 'codex_cursor_in_composer',
+                side_effect=lambda pane, content: len(fake.keys) < 2):
+            self.assertEqual('submitted', peerchat.send_once(
+                'pane', peerchat.PROFILES['codex'], CODEX_WARNINGS_FOOTER_TEXT, dry_run=False))
+        self.assertEqual([CODEX_WARNINGS_FOOTER_TEXT, '\t'], fake.keys)
+
+    def test_codex_pointer_after_submit_with_caret_elsewhere_never_gets_retry_keys(self):
+        fake = FakeWag(frames=stable_frames(CODEX_WARNINGS_FOOTER_IDLE, CODEX_WARNINGS_FOOTER_TYPED,
+                                            CODEX_WARNINGS_FOOTER_TYPED))
+        with self.environment(fake), patch.object(peerchat, 'codex_cursor_in_composer',
+                side_effect=lambda pane, content: len(fake.keys) < 2):
+            with self.assertRaisesRegex(peerchat.Failed, 'composer visible but caret not in it'):
+                peerchat.send_once('pane', peerchat.PROFILES['codex'], CODEX_WARNINGS_FOOTER_TEXT, dry_run=False)
+        self.assertEqual([CODEX_WARNINGS_FOOTER_TEXT, '\t'], fake.keys)
+
+    def test_codex_bare_prompt_after_submit_waits_for_its_placeholder_without_extra_keys(self):
+        fake = FakeWag(frames=stable_frames(CODEX_IDLE, codex(TEXT), '› ', CODEX_IDLE))
+        self.assertEqual('submitted', self.send(fake))
+        self.assertEqual([TEXT, '\t'], fake.keys)
+
     def test_precheck_requires_two_equal_empty_snapshots(self):
         for tool, idle, render in [('claude', CLAUDE_IDLE, claude), ('codex', CODEX_IDLE, codex)]:
             with self.subTest(tool=tool):
@@ -513,7 +639,99 @@ class Submission(unittest.TestCase):
         self.assertEqual(2, fake.reads)
 
 
+class CodexCursorSnapshot(unittest.TestCase):
+    @staticmethod
+    def snapshot(frame, row, column=2):
+        return {'cols': 240, 'cursor': {'row': row, 'col': column, 'visible': True}, 'rows': [
+            {'row': index, 'runs': [{'col': 0, 'width': len(text), 'text': text}]}
+            for index, text in enumerate(frame.splitlines())]}
+
+    def test_caret_inside_idle_or_wrapped_typed_composer(self):
+        for frame, row in [(CODEX_WARNINGS_FOOTER_IDLE, 0), (CODEX_WARNINGS_FOOTER_TYPED, 0),
+                           (CODEX_WARNINGS_FOOTER_TYPED, 2)]:
+            with self.subTest(row=row, frame=frame):
+                snapshot = self.snapshot(frame, row)
+                with patch.object(wag, 'request', return_value=snapshot) as request:
+                    self.assertTrue(peerchat.codex_cursor_in_composer('pane', peerchat.codex_composer(frame)))
+                request.assert_called_once_with('session.text', target='pane', args={'styles': True}, timeout=15.0)
+
+    def test_history_search_footer_and_centered_dialog_caret_are_outside_composer(self):
+        frame = '  Dialog input\n\n› Ask Codex to do anything\n\n  status\n  Search history: '
+        for row, column in [(0, 14), (4, 2), (5, 18), (2, 20), (99, 2)]:
+            with self.subTest(row=row, column=column), patch.object(wag, 'request',
+                    return_value=self.snapshot(frame, row, column)):
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_row_coordinates_survive_long_transcripts_and_trailing_blank_rows(self):
+        frame = 'old output\n' * 45 + CODEX_WARNINGS_FOOTER_IDLE + '\n\n\n'
+        with patch.object(wag, 'request', return_value=self.snapshot(frame, 45)):
+            self.assertTrue(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_unicode_separator_cells_do_not_shift_styled_cursor_rows(self):
+        for separator in ('\u2028', '\u2029', '\x85', '\x1c'):
+            lines = ['old' + separator + 'output', '', '› Ask Codex to do anything', '', '  status']
+            snapshot = {'cols': 100, 'cursor': {'row': 2, 'col': 2, 'visible': True}, 'rows': [
+                {'row': index, 'runs': [{'col': 0, 'width': len(text), 'text': text}]}
+                for index, text in enumerate(lines)]}
+            with self.subTest(separator=separator), patch.object(wag, 'request', return_value=snapshot):
+                self.assertTrue(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+                snapshot['cursor']['row'] = 3
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_changed_composer_snapshot_cannot_authorize_old_content(self):
+        for frame in ['› another draft\n\n  status', '! shell\n\n  status', '  No composer']:
+            with self.subTest(frame=frame), patch.object(wag, 'request', return_value=self.snapshot(frame, 0)):
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_gaps_between_styled_runs_use_cell_columns(self):
+        snapshot = self.snapshot('› Ask Codex to do anything\n\n  status', 0)
+        snapshot['rows'][0]['runs'] = [
+            {'col': 0, 'width': 1, 'text': '›'},
+            {'col': 2, 'width': 23, 'text': 'Ask Codex to do anything'}]
+        with patch.object(wag, 'request', return_value=snapshot):
+            self.assertTrue(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_hidden_or_missing_visibility_never_authorizes_stale_composer_coordinates(self):
+        snapshot = self.snapshot('› Ask Codex to do anything\n\n  Rename thread: name', 0)
+        for visible in [False, None, 0, 1, 'true']:
+            with self.subTest(visible=visible):
+                snapshot['cursor']['visible'] = visible
+                with patch.object(wag, 'request', return_value=snapshot):
+                    self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+        del snapshot['cursor']['visible']
+        with patch.object(wag, 'request', return_value=snapshot):
+            self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+    def test_malformed_or_missing_cursor_evidence_fails_closed(self):
+        good = self.snapshot('› Ask Codex to do anything\n\n  status', 0)
+        for value in [None, [], {}, {'cursor': None}, {**good, 'rows': None},
+                      {**good, 'cols': None}, {**good, 'cols': True}, {**good, 'cols': 0},
+                      {**good, 'rows': [{'row': 2, 'runs': []}]},
+                      {**good, 'rows': [{'row': 0, 'runs': [{'col': -1, 'width': 1, 'text': 'x'}]}]},
+                      {**good, 'rows': [{'row': 0, 'runs': [{'col': 2**70, 'width': 1, 'text': 'x'}]}]},
+                      {**good, 'rows': [{'row': 0, 'runs': [{'col': 239, 'width': 2, 'text': 'x'}]}]}]:
+            with self.subTest(value=value), patch.object(wag, 'request', return_value=value):
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+        for row, column in [(None, 2), (True, 2), (-1, 2), (0, None), (0, True), (0, -1)]:
+            with self.subTest(row=row, column=column), patch.object(wag, 'request',
+                    return_value=self.snapshot('› Ask Codex to do anything', row, column)):
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+        for error in [wag.CtlError('unsupported'), OSError('unreachable')]:
+            with self.subTest(error=error), patch.object(wag, 'request', side_effect=error):
+                self.assertFalse(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+
+
 class CursorTransport(unittest.TestCase):
+    def test_cli_fallback_preserves_styles_and_the_real_codex_guard(self):
+        snapshot = CodexCursorSnapshot.snapshot(CODEX_WARNINGS_FOOTER_IDLE, 0)
+        response = subprocess.CompletedProcess([], 0, json.dumps({'ok': True, 'result': snapshot}).encode(), b'')
+        with patch.object(wag, '_via_pipe', return_value=None), \
+                patch.object(wag, 'ctl_path', return_value='stub-ctl'), \
+                patch.object(wag, '_console_utf8', return_value=lambda: None), \
+                patch.object(wag.subprocess, 'run', return_value=response) as run:
+            self.assertTrue(peerchat.codex_cursor_in_composer('pane', 'Ask Codex to do anything'))
+        self.assertEqual(['stub-ctl', 'session', 'text', '--styles', '--target', 'pane', '--json'], run.call_args.args[0])
+
     def test_non_object_envelopes_on_pipe_are_refused_without_cli_fallback(self):
         for raw in [b'[]', b'null', b'"text"']:
             with self.subTest(raw=raw), patch.object(wag, '_open_pipe', return_value=io.BytesIO()), \

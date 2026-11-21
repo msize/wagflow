@@ -57,6 +57,7 @@ class StallFixture(unittest.TestCase):
         self.status = self.enterContext(patch.object(wag, 'set_status'))
         self.notify = self.enterContext(patch.object(wag, 'notify'))
         self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('real terminal request')))
+        self.enterContext(patch.object(peerchat, 'codex_cursor_in_composer', return_value=True))
         self.r = self.make_relay()
 
     def make_relay(self, minutes=S, dry_run=False):
@@ -722,6 +723,37 @@ class CiStuck(StallFixture):
 
 
 class LastWords(unittest.TestCase):
+    def test_codex_empty_composer_also_needs_its_caret_for_idle(self):
+        peer = relay.Peer('author', 'codex', 'pane')
+        frames = [
+            '› Ask Codex to do anything\n\n  GPT-6.1-Sol high · repo · Main [default]\n  Search history: deploy',
+            '› Ask Codex to do anything\n\n  Rename thread: my-name\n  Enter to save · Esc to cancel']
+        for frame in frames:
+            with self.subTest(frame=frame), patch.object(peerchat, 'codex_cursor_in_composer',
+                    return_value=False) as guard:
+                self.assertEqual([f'author composer is not provably empty ({peerchat.CODEX_CARET_REASON})'],
+                                 closer.idle_blockers(peer, frame))
+                guard.assert_called_once_with('pane', peerchat.codex_composer(frame))
+        with patch.object(peerchat, 'codex_cursor_in_composer', return_value=True):
+            self.assertEqual([], closer.idle_blockers(peer, CODEX_IDLE))
+
+    def test_codex_empty_first_line_draft_at_its_start_is_not_idle_or_a_typing_target(self):
+        peer = relay.Peer('author', 'codex', 'pane')
+        for frame, row in [
+                ('› Done.\n\n› \n\n  continue the refactor and then\n  run the tests', 2),
+                ('????????\n› \n  human draft continuation', 1)]:
+            snapshot = {'cols': 100, 'cursor': {'row': row, 'col': 2, 'visible': True}, 'rows': [
+                {'row': index, 'runs': [{'col': 0, 'width': len(text), 'text': text}]}
+                for index, text in enumerate(frame.splitlines())]}
+            with self.subTest(frame=frame), patch.object(wag, 'request', return_value=snapshot), \
+                    patch.object(wag, 'pane_text', return_value=frame), patch.object(wag, 'type_into') as type_into:
+                self.assertEqual('', peerchat.codex_composer(frame))
+                self.assertTrue(peerchat.codex_cursor_in_composer('pane', ''))
+                self.assertEqual(['author composer is not provably empty'], closer.idle_blockers(peer, frame))
+                with self.assertRaisesRegex(peerchat.Refused, 'not empty'):
+                    peerchat.send_once('pane', peerchat.PROFILES['codex'], 'A new mailbox pointer', dry_run=False)
+                type_into.assert_not_called()
+
     def test_codex_last_paragraph_above_the_composer_not_the_footer(self):
         self.assertEqual(" ".join(line.strip() for line in CODEX_IDLE.splitlines()[:2]),
                          relay.last_words(CODEX_IDLE, 'codex'))

@@ -234,6 +234,7 @@ class DeliveryFixture(unittest.TestCase):
         self.enterContext(patch.object(relay, 'now', lambda: self.t))
         # An accidental real terminal request is a hard test failure.
         self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('real terminal request')))
+        self.enterContext(patch.object(peerchat, 'codex_cursor_in_composer', return_value=True))
         self.status = self.enterContext(patch.object(wag, 'set_status'))
         self.notify = self.enterContext(patch.object(wag, 'notify'))
         self.pane = self.enterContext(patch.object(wag, 'pane_text', return_value=CLAUDE_IDLE))
@@ -2758,6 +2759,7 @@ class AutonomousClose(unittest.TestCase):
         self.notify = self.enterContext(patch.object(wag, 'notify'))
         self.status = self.enterContext(patch.object(wag, 'set_status'))
         self.enterContext(patch.object(wag, 'request', side_effect=AssertionError('unexpected terminal request')))
+        self.enterContext(patch.object(peerchat, 'codex_cursor_in_composer', return_value=True))
         # #41: the checkout cleanup is started, never run, here.
         self.spawn = self.enterContext(patch.object(cleanup, 'start_after_close', side_effect=self.spawned))
         # #33: the finished revmux helper left its completion marker; its direct-mode pane has ended

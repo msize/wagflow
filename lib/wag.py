@@ -178,7 +178,7 @@ def _cli_args(payload: dict[str, Any]) -> list[str]:
     out = [area] + ([verb] if verb else [])
     if cmd in ("session.type", "session.write", "session.paste"):
         out += ["--select", str(args_in.get("text", ""))]
-    elif cmd == 'session.new':
+    elif cmd in ('session.new', 'session.text'):
         for key, value in args_in.items():
             if isinstance(value, bool):
                 if value:

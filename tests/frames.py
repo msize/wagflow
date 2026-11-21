@@ -72,6 +72,34 @@ CODEX_MULTILINE_STATUS = r"""› Ask Codex to do anything
   29K out · 01a1ee24-f330-74e0-b958-14942a99e30a · Main [default]
   ← for agents · ? for shortcuts"""
 
+# Captured from the live Codex author pane on 2026-11-18 with an unsent pointer: no shortcuts
+# footer, and the wrapped status line is the last block.
+CODEX_MULTILINE_STATUS_TYPED = r"""› Chat from Claude: you have inbox mail from reviewer: wagterm-full-update P3 wip r1
+  CHANGES_REQUESTED [id 20261118T164955Z-reviewer-55fa] - read it with: python C:
+  \Projects\my\wagflow\lib\wagmsg.py read 20261118T164955Z-reviewer-55fa
+
+  GPT-6.1-Sol high · C:\Projects\my\wagterm · master · Context 30% used · 1.06M used · 50.5M in
+  · 166K out · 01a1ee24-f330-74e0-b958-14942a99e30a · Main [default]"""
+
+# Captured from the live Codex author pane on 2026-11-20 while idle: warnings share
+# the shortcuts footer below a wrapped status line.
+CODEX_WARNINGS_FOOTER_IDLE = r"""› Ask Codex to do anything
+
+  GPT-6.1-Sol high · C:\Projects\my\wagflow · master · Context 13% used · 76.5K used · 693K in ·
+  3.34K out · 01a1f9e2-6d20-7693-919a-b8796e86bcf8
+  ← for agents · ? for shortcuts                                      ⚠ 2 warnings · f2 to view"""
+
+# Captured from the live Codex reviewer pane on 2026-11-20 with an unsent pointer: the context footer
+# carries the agent, a warnings count and a key hint around the context item.
+CODEX_WARNINGS_FOOTER_TEXT = ("Chat from Claude: you have inbox mail from author: abr-450034-define-proxmox-protection-"
+                              "outcomes DONE [id 20261120T160436Z-author-33f0] - read it with: python C:"
+                              r"\Projects\my\wagflow\lib\wagmsg.py read 20261120T160436Z-author-33f0")
+CODEX_WARNINGS_FOOTER_TYPED = r"""› Chat from Claude: you have inbox mail from author: abr-450034-define-proxmox-protection-
+  outcomes DONE [id 20261120T160436Z-author-33f0] - read it with: python C:
+  \Projects\my\wagflow\lib\wagmsg.py read 20261120T160436Z-author-33f0
+
+                                  Main [default] · 59% context left · ⚠ 2 warnings · f2 to view"""
+
 # Captured from a fresh Codex 0.170 session in WagTerm on 2026-11-18: the status line ends with
 # the thread id, and the shortcuts footer is gone once the composer holds text.
 CODEX_THREAD_STATUS = r"""› Ask Codex to do anything

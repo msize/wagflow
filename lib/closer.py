@@ -464,6 +464,8 @@ def idle_blockers(peer, text: str) -> list[str]:
             reason += (' (a greyed prompt suggestion? agents the WagFlow launches have them off;'
                        ' for an adopted Claude set "promptSuggestionEnabled": false in ~/.claude/settings.json)')
         reasons.append(reason)
+    elif peer.tool == 'codex' and not peerchat.codex_cursor_in_composer(peer.pane, content):
+        reasons.append(f'{peer.box} composer is not provably empty ({peerchat.CODEX_CARET_REASON})')
     return reasons
 
 

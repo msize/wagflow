@@ -83,24 +83,14 @@ CODEX_SHELL_PROMPT_RE = re.compile(r"^![\s ]*(.*?)\s*$")
 # is also how the footer and an overlay row are drawn - the difference is only that a continuation
 # follows the prompt row inside the same block.
 CODEX_CONT_RE = re.compile(r"^ {2}\s*(\S.*?)\s*$")
-# Codex indents its footer rows by two spaces. Only the final footer row is stripped generically.
-# One further blank-separated status block is stripped only under a known shortcuts/context footer
-# and a full CODEX_STATUS_RE boundary match (see trailing_block). Unknown overlays fail closed.
+# Older Codex glues one two-space-indented footer row to its composer.
 FOOTER_RE = re.compile(r"^ {2}\S")
-# Once its composer holds text, Codex 0.158 replaces `? for shortcuts` with this row, pushed to the
-# right edge of the pane - far more than two spaces in.
-CONTEXT_FOOTER_RE = re.compile(r"^\s{2,}\d{1,3}% context left\s*$")
-# Modern Codex can wrap its configured status line above the shortcuts footer. Require
-# the captured model/effort and last-item boundaries instead of discarding arbitrary
-# indented rows, which might be a draft continuation or a modal choice list. Only the
-# boundaries are checked; the middle items vary with the status-line config. Codex 0.170
-# ends the line with the agent and mode (`Main [default]`) or, in a session without
-# them, with the thread id.
-CODEX_STATUS_RE = re.compile(
-    r"^(?:gpt|GPT)-[A-Za-z0-9_.:-]+ (?:minimal|low|medium|high|xhigh|ultra|max) · .+ · "
-    r"(?:[A-Za-z][A-Za-z0-9 _-]* \[[A-Za-z][A-Za-z0-9_-]*\]"
-    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
-CODEX_SHORTCUTS = frozenset(('? for shortcuts', '← for agents · ? for shortcuts'))
+# Modern Codex separates its composer from status/hints/warnings by a blank row. Contents vary
+# with version, width and state. Bound the chrome, reject choices, and verify cursor ownership
+# from a styled snapshot before typing or submitting. See parse_codex_composer/composer_state.
+CHROME_MAX_ROWS = 6
+CODEX_CARET_REASON = ('Codex composer visible but caret not in it '
+                      '(dialog, history search, or WagTerm without session.text --styles cursor.visible)')
 NUMBERED_ROW_RE = re.compile(r"^\s*\d+\.\s+\S")
 # A highlighted chooser row - a permission prompt, a trust dialog, a picker. Kimi Code marks its
 # approval choice with `▶`.
@@ -137,9 +127,10 @@ CLAUDE_HINTS = (
     re.compile(r'Try\s+"[^"]*"\s*'),
     re.compile(r"Ask Claude[A-Za-z .,'…-]*"),
 )
+# Supported Codex captures draw this placeholder when empty. A bare prompt can start a
+# multiline draft whose later paragraphs look like chrome, even with the caret on its first row.
 CODEX_HINTS = (
     re.compile(r"Ask Codex to do anything\s*"),
-    re.compile(r"\s*"),
 )
 # Kimi Code's empty composer draws no placeholder at all.
 KIMI_HINTS = (re.compile(r"\s*"),)
@@ -244,31 +235,40 @@ def queued_for(text: str, typed: str) -> bool:
 
 # --- reading the composer -------------------------------------------------------------------
 
-def trailing_block(text: str) -> list[str]:
-    """The last non-blank block, stripping a footer row and a recognized Codex status block."""
-    lines = text.splitlines()[-BOX_LINES:]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    known_footer = bool(lines and (lines[-1].strip() in CODEX_SHORTCUTS or CONTEXT_FOOTER_RE.match(lines[-1])))
-    if lines and (FOOTER_RE.match(lines[-1]) or CONTEXT_FOOTER_RE.match(lines[-1])):
-        lines.pop()
-        while lines and not lines[-1].strip():
-            lines.pop()
+def last_block_start(lines: list[str]) -> int:
+    """Start of the final block; the caller must trim trailing blank rows first."""
     start = len(lines)
     while start and lines[start - 1].strip():
         start -= 1
-    status = lines[start:]
-    if (known_footer and status and all(FOOTER_RE.match(row) and not NUMBERED_ROW_RE.match(row) for row in status)
-            and CODEX_STATUS_RE.fullmatch(' '.join(row[2:] for row in status))):
-        # The blank separator above this complete status block keeps draft continuations
-        # in the composer. Strip at most one block, never scan through an unknown overlay.
+    return start
+
+
+def codex_composer_block(text: str | list[str]) -> tuple[int, list[str]]:
+    """One composer block above at most one bounded chrome block, with visible row coordinates."""
+    all_lines = text.splitlines() if isinstance(text, str) else text
+    origin = max(0, len(all_lines) - BOX_LINES)
+    lines = all_lines[origin:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    start = last_block_start(lines)
+    block = lines[start:]
+    prompts = [index for index in range(start, len(lines))
+               if CODEX_PROMPT_RE.match(lines[index]) or CODEX_SHELL_PROMPT_RE.match(lines[index])]
+    if not prompts:
+        if len(block) > CHROME_MAX_ROWS or any(
+                NUMBERED_ROW_RE.match(row) or CHOOSER_RE.match(row)
+                or CODEX_PROMPT_RE.match(row.lstrip()) or CODEX_SHELL_PROMPT_RE.match(row.lstrip())
+                for row in block):
+            return origin + start, []
         lines = lines[:start]
         while lines and not lines[-1].strip():
             lines.pop()
-        start = len(lines)
-        while start and lines[start - 1].strip():
-            start -= 1
-    return lines[start:]
+        start = last_block_start(lines)
+    elif prompts[-1] > 0 and lines[prompts[-1] - 1].strip() and FOOTER_RE.match(lines[-1]):
+        # Compatibility with old captures: only the glued final row is chrome. A continuation
+        # after a prompt separated from the transcript by a blank row stays in the draft.
+        lines.pop()
+    return origin + start, lines[start:]
 
 
 @dataclass(frozen=True)
@@ -299,23 +299,34 @@ def claude_composer(text: str) -> str | None:
     return body.content if body else None
 
 
-def codex_composer(text: str) -> str | None:
+@dataclass(frozen=True)
+class CodexComposer:
+    content: str
+    first_row: int
+    last_row: int
+
+
+def parse_codex_composer(text: str | list[str]) -> CodexComposer | None:
     """Codex's composer content, prompt row plus its wrapped rows. None when not visible.
 
     A long line wraps onto two-space-indented continuation rows, so reading the prompt row alone
     would hand `verify_typed` the first row of a long message and nothing else. The rows are joined
     here the way `claude_composer` joins the rows between the rules. Shell mode (`!`) resets the
-    content, so a shell line is never a target, and any row the parser does not recognise resets it
-    too: an unread frame must refuse, not send.
+    content, so a shell line is never a target. Unknown rows inside the composer block reset it.
+    One bounded chrome block below is dropped without matching it against known chrome. A result proves
+    neither idleness nor focus: callers acting on emptiness also need codex_cursor_in_composer.
     """
     rows: list[str] | None = None
-    for line in trailing_block(text):
+    start, block = codex_composer_block(text)
+    first_row = start
+    for index, line in enumerate(block, start):
         if CODEX_SHELL_PROMPT_RE.match(line):
             rows = None
             continue
         match = CODEX_PROMPT_RE.match(line)
         if match:
             rows = [match.group(1)]
+            first_row = index
             continue
         cont = CODEX_CONT_RE.match(line)
         if cont is not None and rows is not None:
@@ -324,7 +335,51 @@ def codex_composer(text: str) -> str | None:
         rows = None
     if rows is None:
         return None
-    return " ".join(row for row in rows if row).strip()
+    return CodexComposer(" ".join(row for row in rows if row).strip(), first_row, start + len(block) - 1)
+
+
+def codex_composer(text: str) -> str | None:
+    """Read the text structurally. This alone does not prove that the composer owns input."""
+    body = parse_codex_composer(text)
+    return body.content if body else None
+
+
+def codex_cursor_in_composer(pane: str, expected: str) -> bool:
+    """Verify the content and caret row in one WagTerm snapshot. Modal backdrops and history
+    search can leave a visible composer while routing input elsewhere (Codex 0.170). Hidden
+    cursors retain stale coordinates, so visibility must be explicitly true in the snapshot."""
+    try:
+        snapshot = wag.request('session.text', target=pane, args={'styles': True}, timeout=15.0)
+        if not isinstance(snapshot['cursor'], dict) or snapshot['cursor'].get('visible') is not True:
+            return False
+        columns = snapshot['cols']
+        if type(columns) is not int or columns < 1:
+            return False
+        cursor, caret_column = snapshot['cursor']['row'], snapshot['cursor']['col']
+        if (type(cursor) is not int or cursor < 0 or type(caret_column) is not int
+                or not 2 <= caret_column <= columns):
+            return False
+        lines = []
+        for row in snapshot['rows']:
+            # Default session.text is the visible grid, numbered from zero, without history.
+            if type(row['row']) is not int or row['row'] != len(lines):
+                return False
+            parts = []
+            end = 0
+            for run in row['runs']:
+                column, width, value = run['col'], run['width'], run['text']
+                if (type(column) is not int or type(width) is not int or column < end
+                        or width < 0 or column + width > columns or not isinstance(value, str)):
+                    return False
+                parts.extend((' ' * (column - end), value))
+                end = column + width
+            lines.append(''.join(parts).rstrip())
+        # Keep emulator row boundaries: Unicode separator cells are not additional screen rows.
+        body = parse_codex_composer(lines)
+        return bool(body and body.content == expected and body.first_row <= cursor <= body.last_row
+                    and (not looks_empty(PROFILES['codex'], body.content) or caret_column == 2))
+    except (wag.CtlError, OSError, KeyError, TypeError, ValueError):
+        return False
 
 
 def kimi_box(text: str) -> tuple[list[str], int, int] | None:
@@ -420,6 +475,7 @@ def composer_state(pane: str, profile: Profile, text: str) -> tuple[str | None, 
                 state = 'ambiguous'
         except (wag.CtlError, OSError):
             pass  # Unavailable or malformed cursor data retains the text-only refusal.
+    focused = profile.tool != 'codex' or content is None or codex_cursor_in_composer(pane, content)
     fresh = wag.pane_text(pane)
     fresh_body = parse_claude_composer(fresh) if profile.tool == 'claude' else None
     fresh_content = fresh_body.content if fresh_body else (composer_content(profile.tool, fresh) if profile.tool != 'claude' else None)
@@ -427,6 +483,8 @@ def composer_state(pane: str, profile: Profile, text: str) -> tuple[str | None, 
         state = 'dialog'
     elif (body, content) != (fresh_body, fresh_content):
         state = 'changing'
+    elif not focused:
+        state = 'unfocused'
     return fresh_content, state, fresh
 
 
@@ -525,6 +583,8 @@ def precheck(pane: str, profile: Profile) -> None:
         raise Refused('a chooser or approval dialog appeared while checking the target composer')
     if state == 'changing':
         raise Refused('the target composer changed while checking it; not typing')
+    if state == 'unfocused':
+        raise Refused(CODEX_CARET_REASON)
     if content is None:
         raise Refused(f"no {profile.display} composer visible in the target pane")
     if state == 'ambiguous':
@@ -568,11 +628,11 @@ def verify_typed(pane: str, profile: Profile, typed: str) -> None:
         matched = None
         if content is not None:
             seen = content
-            if state != 'changing' and owns(content, typed):
+            if state not in {'changing', 'unfocused'} and owns(content, typed):
                 if compact(content) == compact(typed):
                     return
                 matched = content
-            if state not in {'empty', 'ambiguous', 'changing'} and compact(content) not in compact(typed):
+            if state not in {'empty', 'ambiguous', 'changing', 'unfocused'} and compact(content) not in compact(typed):
                 raise Failed(f"composer holds something other than the attempted pointer: {content!r}; submit withheld")
         if matched is None:
             partial = None
@@ -584,6 +644,8 @@ def verify_typed(pane: str, profile: Profile, typed: str) -> None:
         if now() >= deadline and (partial is None or now() >= deadline + VERIFY_STABLE):
             break
         pause(0.25)
+    if state == 'unfocused':
+        raise Failed(f'{CODEX_CARET_REASON}; submit withheld. The pane now shows {seen[:120]!r}')
     raise Failed(
         "typed text was not confirmed in the target composer; submit withheld. "
         f"The pane now shows {seen[:120]!r} - "
@@ -617,9 +679,17 @@ def verify_submitted(pane: str, profile: Profile, typed: str) -> str:
             elif profile.tool == 'claude' and content == 'Press up to edit queued messages':
                 # Ambiguous with a literal draft before typing; only accept it after our submit.
                 return 'queued' + suffix
-            elif state == 'empty':
+            elif state == 'empty' or (state == 'unfocused' and looks_empty(profile, content)):
                 outcome = 'queued' if profile.tool == 'codex' and queued_for(fresh, typed) else 'submitted'
                 return ('submitted' if returned else outcome) + suffix
+            elif state == 'unfocused':
+                if needs_key or now() >= deadline:
+                    raise Failed(f'{CODEX_CARET_REASON}; further keys withheld')
+            elif profile.tool == 'codex' and content == '':
+                # A blank first row can belong to a multiline draft. After submit, wait for the
+                # actual empty-composer placeholder to draw instead of retrying keys or retyping.
+                if now() >= deadline:
+                    raise Failed('Codex empty-composer placeholder not confirmed after submit; further keys withheld')
             elif state == 'ambiguous' and not owns(content, typed):
                 if now() >= deadline:
                     raise Failed('pointer not confirmed in the composer; composer shows other text with '

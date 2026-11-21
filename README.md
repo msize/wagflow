@@ -523,8 +523,15 @@ and `lib/kimi.py` prepares what the pane needs.
 can prove is empty, never into a dialog, and never answers a prompt. A refusal before typing waits
 for the next tick. After typing a pointer once, it verifies submission from an empty composer
 and records whether the pointer was submitted or queued. Before typing or submitting, it rereads
-the composer after any cursor query and requires both parsed snapshots to agree. A stuck pointer gets up to two more
-submit-key presses, each guarded by a fresh composer check. A clipped pointer must still show its
+the composer after any cursor query and requires both parsed snapshots to agree. Codex status and
+hint rows are read by structure, with at most six rows in one blank-separated block below the composer.
+Delivery also requires a WagTerm build whose `session.text --styles` snapshot includes
+`cursor.visible`, matching composer text, and a visible caret inside its rows. Missing cursor
+metadata or a hidden cursor refuses delivery. Older builds without `cursor.visible` must be updated.
+The same missing evidence prevents Codex idle detection, so stall alerts and automatic session
+closing also wait for an updated WagTerm build. A bare empty prompt is treated as a possible draft.
+A stuck pointer gets up to two more submit-key presses, each guarded by a fresh composer check.
+A clipped pointer must still show its
 complete message ID. Codex gets one Return fallback only
 when no running-turn or queued-input evidence is visible. It never submits a changed draft or
 a dialog. This verifies submission, not that the agent has read the mail. Failed submissions
@@ -928,7 +935,8 @@ A loop can sit idle with nothing to wake it. The planner's background mail waite
 under memory pressure, a helper may finish with nobody watching its result, or the implementer may
 stop to ask you a question. Each of these looks exactly like a loop waiting correctly. So on the same
 30 s reads the relay also watches for a **stall**. A loop is stalled when both agent panes are
-provably idle (no turn running, an empty composer), no mail is unread, and no helper is running.
+provably idle (no turn running, an empty composer, and for Codex a visible caret in the composer),
+no mail is unread, and no helper is running.
 Mail to a Kimi implementer whose pane shows its usage limit does not count as unread: ringing it
 woke nothing, so the stall period still runs. With `-WaitOnLimit` the relay then waits the limit out;
 otherwise the stall pointer names the limit and the held mail (#88).
